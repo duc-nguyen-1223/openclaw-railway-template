@@ -11,41 +11,55 @@ import * as tar from "tar";
 // Railway commonly sets PORT=8080 for HTTP services.
 const PORT = Number.parseInt(process.env.PORT ?? "8080", 10);
 const STATE_DIR =
-  process.env.MOLTBOT_STATE_DIR?.trim() ||
-  path.join(os.homedir(), ".moltbot");
+  process.env.OPENCLAW_STATE_DIR?.trim() ||
+  path.join(os.homedir(), ".openclaw");
 const WORKSPACE_DIR =
-  process.env.MOLTBOT_WORKSPACE_DIR?.trim() ||
+  process.env.OPENCLAW_WORKSPACE_DIR?.trim() ||
   path.join(STATE_DIR, "workspace");
 
 // Protect /setup with a user-provided password.
 const SETUP_PASSWORD = process.env.SETUP_PASSWORD?.trim();
 
-// Gateway admin token (protects Moltbot gateway + Control UI).
+// Debug logging helper
+const DEBUG = process.env.OPENCLAW_TEMPLATE_DEBUG?.toLowerCase() === "true";
+function debug(...args) {
+  if (DEBUG) console.log(...args);
+}
+
+// Gateway admin token (protects Openclaw gateway + Control UI).
 // Must be stable across restarts. If not provided via env, persist it in the state dir.
 function resolveGatewayToken() {
-  const envTok = process.env.MOLTBOT_GATEWAY_TOKEN?.trim();
-  if (envTok) return envTok;
+  const envTok = process.env.OPENCLAW_GATEWAY_TOKEN?.trim();
+  if (envTok) {
+    debug(`[token] Using token from OPENCLAW_GATEWAY_TOKEN env variable (${envTok.slice(0, 8)}...)`);
+    return envTok;
+  }
 
   const tokenPath = path.join(STATE_DIR, "gateway.token");
   try {
     const existing = fs.readFileSync(tokenPath, "utf8").trim();
-    if (existing) return existing;
+    if (existing) {
+      debug(`[token] Using token from persisted file ${tokenPath} (${existing.slice(0, 8)}...)`);
+      return existing;
+    }
   } catch {
     // ignore
   }
 
   const generated = crypto.randomBytes(32).toString("hex");
+  debug(`[token] Generated new random token (${generated.slice(0, 8)}...)`);
   try {
     fs.mkdirSync(STATE_DIR, { recursive: true });
     fs.writeFileSync(tokenPath, generated, { encoding: "utf8", mode: 0o600 });
-  } catch {
-    // best-effort
+    debug(`[token] Persisted token to ${tokenPath}`);
+  } catch (err) {
+    console.warn(`[token] Could not persist token: ${err}`);
   }
   return generated;
 }
 
-const MOLTBOT_GATEWAY_TOKEN = resolveGatewayToken();
-process.env.MOLTBOT_GATEWAY_TOKEN = MOLTBOT_GATEWAY_TOKEN;
+const OPENCLAW_GATEWAY_TOKEN = resolveGatewayToken();
+process.env.OPENCLAW_GATEWAY_TOKEN = OPENCLAW_GATEWAY_TOKEN;
 
 // Where the gateway will listen internally (we proxy to it).
 const INTERNAL_GATEWAY_PORT = Number.parseInt(
@@ -56,18 +70,18 @@ const INTERNAL_GATEWAY_HOST = process.env.INTERNAL_GATEWAY_HOST ?? "127.0.0.1";
 const GATEWAY_TARGET = `http://${INTERNAL_GATEWAY_HOST}:${INTERNAL_GATEWAY_PORT}`;
 
 // Always run the built-from-source CLI entry directly to avoid PATH/global-install mismatches.
-const MOLTBOT_ENTRY =
-  process.env.MOLTBOT_ENTRY?.trim() || "/moltbot/dist/entry.js";
-const MOLTBOT_NODE = process.env.MOLTBOT_NODE?.trim() || "node";
+const OPENCLAW_ENTRY =
+  process.env.OPENCLAW_ENTRY?.trim() || "/openclaw/dist/entry.js";
+const OPENCLAW_NODE = process.env.OPENCLAW_NODE?.trim() || "node";
 
 function clawArgs(args) {
-  return [MOLTBOT_ENTRY, ...args];
+  return [OPENCLAW_ENTRY, ...args];
 }
 
 function configPath() {
   return (
-    process.env.MOLTBOT_CONFIG_PATH?.trim() ||
-    path.join(STATE_DIR, "moltbot.json")
+    process.env.OPENCLAW_CONFIG_PATH?.trim() ||
+    path.join(STATE_DIR, "openclaw.json")
   );
 }
 
@@ -89,7 +103,7 @@ function sleep(ms) {
 async function waitForGatewayReady(opts = {}) {
   const timeoutMs = opts.timeoutMs ?? 20_000;
   const start = Date.now();
-  const endpoints = ["/moltbot", "/moltbot", "/", "/health"];
+  const endpoints = ["/openclaw", "/openclaw", "/", "/health"];
   
   while (Date.now() - start < timeoutMs) {
     for (const endpoint of endpoints) {
@@ -117,6 +131,33 @@ async function startGateway() {
   fs.mkdirSync(STATE_DIR, { recursive: true });
   fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
 
+  // Sync wrapper token to openclaw.json before every gateway start.
+  // This ensures the gateway's config-file token matches what the wrapper injects via proxy.
+  debug(`[gateway] syncing token to config (${OPENCLAW_GATEWAY_TOKEN.slice(0, 8)}...)`);
+  const syncResult = await runCmd(
+    OPENCLAW_NODE,
+    clawArgs(["config", "set", "gateway.auth.token", OPENCLAW_GATEWAY_TOKEN]),
+  );
+
+  if (syncResult.code !== 0) {
+    console.error(`[gateway] WARNING: Token sync failed with code ${syncResult.code}: ${syncResult.output}`);
+  }
+
+  // Verify sync succeeded
+  try {
+    const config = JSON.parse(fs.readFileSync(configPath(), "utf8"));
+    const configToken = config?.gateway?.auth?.token;
+    if (configToken !== OPENCLAW_GATEWAY_TOKEN) {
+      throw new Error(
+        `Token mismatch: wrapper has ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}... but config has ${(configToken || 'null')?.slice?.(0, 16)}...`
+      );
+    }
+    debug("[gateway] ✓ Token verified in config");
+  } catch (err) {
+    console.error(`[gateway] ERROR: Token verification failed: ${err}`);
+    throw err; // Don't start gateway with mismatched token
+  }
+
   const args = [
     "gateway",
     "run",
@@ -127,19 +168,19 @@ async function startGateway() {
     "--auth",
     "token",
     "--token",
-    MOLTBOT_GATEWAY_TOKEN,
+    OPENCLAW_GATEWAY_TOKEN,
   ];
 
-  gatewayProc = childProcess.spawn(MOLTBOT_NODE, clawArgs(args), {
+  gatewayProc = childProcess.spawn(OPENCLAW_NODE, clawArgs(args), {
     stdio: "inherit",
     env: {
       ...process.env,
-      MOLTBOT_STATE_DIR: STATE_DIR,
-      MOLTBOT_WORKSPACE_DIR: WORKSPACE_DIR,
+      OPENCLAW_STATE_DIR: STATE_DIR,
+      OPENCLAW_WORKSPACE_DIR: WORKSPACE_DIR,
     },
   });
 
-  console.log(`[gateway] starting with command: ${MOLTBOT_NODE} ${clawArgs(args).join(" ")}`);
+  console.log(`[gateway] starting with command: ${OPENCLAW_NODE} ${clawArgs(args).join(" ")}`);
   console.log(`[gateway] STATE_DIR: ${STATE_DIR}`);
   console.log(`[gateway] WORKSPACE_DIR: ${WORKSPACE_DIR}`);
   console.log(`[gateway] config path: ${configPath()}`);
@@ -200,14 +241,14 @@ function requireSetupAuth(req, res, next) {
   const header = req.headers.authorization || "";
   const [scheme, encoded] = header.split(" ");
   if (scheme !== "Basic" || !encoded) {
-    res.set("WWW-Authenticate", 'Basic realm="Moltbot Setup"');
+    res.set("WWW-Authenticate", 'Basic realm="Openclaw Setup"');
     return res.status(401).send("Auth required");
   }
   const decoded = Buffer.from(encoded, "base64").toString("utf8");
   const idx = decoded.indexOf(":");
   const password = idx >= 0 ? decoded.slice(idx + 1) : "";
   if (password !== SETUP_PASSWORD) {
-    res.set("WWW-Authenticate", 'Basic realm="Moltbot Setup"');
+    res.set("WWW-Authenticate", 'Basic realm="Openclaw Setup"');
     return res.status(401).send("Invalid password");
   }
   return next();
@@ -236,13 +277,13 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
 });
 
 app.get("/setup/api/status", requireSetupAuth, async (_req, res) => {
-  const version = await runCmd(MOLTBOT_NODE, clawArgs(["--version"]));
+  const version = await runCmd(OPENCLAW_NODE, clawArgs(["--version"]));
   const channelsHelp = await runCmd(
-    MOLTBOT_NODE,
+    OPENCLAW_NODE,
     clawArgs(["channels", "add", "--help"]),
   );
 
-  // We reuse Moltbot's own auth-choice grouping logic indirectly by hardcoding the same group defs.
+  // We reuse Openclaw's own auth-choice grouping logic indirectly by hardcoding the same group defs.
   // This is intentionally minimal; later we can parse the CLI help output to stay perfectly in sync.
   const authGroups = [
     {
@@ -350,7 +391,7 @@ app.get("/setup/api/status", requireSetupAuth, async (_req, res) => {
   res.json({
     configured: isConfigured(),
     gatewayTarget: GATEWAY_TARGET,
-    moltbotVersion: version.output.trim(),
+    openclawVersion: version.output.trim(),
     channelsAddHelp: channelsHelp.output,
     authGroups,
   });
@@ -374,7 +415,7 @@ function buildOnboardArgs(payload) {
     "--gateway-auth",
     "token",
     "--gateway-token",
-    MOLTBOT_GATEWAY_TOKEN,
+    OPENCLAW_GATEWAY_TOKEN,
     "--flow",
     payload.flow || "quickstart",
   ];
@@ -418,8 +459,8 @@ function runCmd(cmd, args, opts = {}) {
       ...opts,
       env: {
         ...process.env,
-        MOLTBOT_STATE_DIR: STATE_DIR,
-        MOLTBOT_WORKSPACE_DIR: WORKSPACE_DIR,
+        OPENCLAW_STATE_DIR: STATE_DIR,
+        OPENCLAW_WORKSPACE_DIR: WORKSPACE_DIR,
       },
     });
 
@@ -452,7 +493,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
 
     const payload = req.body || {};
     const onboardArgs = buildOnboardArgs(payload);
-    const onboard = await runCmd(MOLTBOT_NODE, clawArgs(onboardArgs));
+    const onboard = await runCmd(OPENCLAW_NODE, clawArgs(onboardArgs));
 
     let extra = "";
 
@@ -462,26 +503,55 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
     if (ok) {
       // Ensure gateway token is written into config so the browser UI can authenticate reliably.
       // (We also enforce loopback bind since the wrapper proxies externally.)
-      await runCmd(MOLTBOT_NODE, clawArgs(["config", "set", "gateway.mode", "local"]));
+      debug(`[onboard] syncing wrapper token to config (${OPENCLAW_GATEWAY_TOKEN.slice(0, 8)}...)`);
+
+      await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.mode", "local"]));
       await runCmd(
-        MOLTBOT_NODE,
+        OPENCLAW_NODE,
         clawArgs(["config", "set", "gateway.auth.mode", "token"]),
       );
-      await runCmd(
-        MOLTBOT_NODE,
+
+      const setTokenResult = await runCmd(
+        OPENCLAW_NODE,
         clawArgs([
           "config",
           "set",
           "gateway.auth.token",
-          MOLTBOT_GATEWAY_TOKEN,
+          OPENCLAW_GATEWAY_TOKEN,
         ]),
       );
+
+      if (setTokenResult.code !== 0) {
+        console.error(`[onboard] WARNING: config set gateway.auth.token failed with code ${setTokenResult.code}`);
+        extra += `\n[WARNING] Failed to set gateway token in config: ${setTokenResult.output}\n`;
+      }
+
+      // Verify the token was actually written to config
+      try {
+        const configContent = fs.readFileSync(configPath(), "utf8");
+        const config = JSON.parse(configContent);
+        const configToken = config?.gateway?.auth?.token;
+
+        if (configToken !== OPENCLAW_GATEWAY_TOKEN) {
+          console.error(`[onboard] ERROR: Token mismatch after config set!`);
+          console.error(`[onboard]   Expected: ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}...`);
+          console.error(`[onboard]   Got:      ${(configToken || 'null')?.slice?.(0, 16)}...`);
+          extra += `\n[ERROR] Token verification failed! Config has different token than wrapper.\n`;
+        } else {
+          debug(`[onboard] ✓ Token verified in config file`);
+          extra += `\n[onboard] Gateway token synced successfully\n`;
+        }
+      } catch (err) {
+        console.error(`[onboard] ERROR: Could not verify token in config: ${err}`);
+        extra += `\n[ERROR] Could not verify token: ${String(err)}\n`;
+      }
+
       await runCmd(
-        MOLTBOT_NODE,
+        OPENCLAW_NODE,
         clawArgs(["config", "set", "gateway.bind", "loopback"]),
       );
       await runCmd(
-        MOLTBOT_NODE,
+        OPENCLAW_NODE,
         clawArgs([
           "config",
           "set",
@@ -491,12 +561,12 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
       );
       // Allow Control UI access without device pairing (fixes error 1008: pairing required)
       await runCmd(
-        MOLTBOT_NODE,
+        OPENCLAW_NODE,
         clawArgs(["config", "set", "gateway.controlUi.allowInsecureAuth", "true"]),
       );
 
       const channelsHelp = await runCmd(
-        MOLTBOT_NODE,
+        OPENCLAW_NODE,
         clawArgs(["channels", "add", "--help"]),
       );
       const helpText = channelsHelp.output || "";
@@ -506,7 +576,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
       if (payload.telegramToken?.trim()) {
         if (!supports("telegram")) {
           extra +=
-            "\n[telegram] skipped (this moltbot build does not list telegram in `channels add --help`)\n";
+            "\n[telegram] skipped (this openclaw build does not list telegram in `channels add --help`)\n";
         } else {
           // Avoid `channels add` here (it has proven flaky across builds); write config directly.
           const token = payload.telegramToken.trim();
@@ -518,7 +588,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
             streamMode: "partial",
           };
           const set = await runCmd(
-            MOLTBOT_NODE,
+            OPENCLAW_NODE,
             clawArgs([
               "config",
               "set",
@@ -528,7 +598,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
             ]),
           );
           const get = await runCmd(
-            MOLTBOT_NODE,
+            OPENCLAW_NODE,
             clawArgs(["config", "get", "channels.telegram"]),
           );
           extra += `\n[telegram config] exit=${set.code} (output ${set.output.length} chars)\n${set.output || "(no output)"}`;
@@ -539,7 +609,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
       if (payload.discordToken?.trim()) {
         if (!supports("discord")) {
           extra +=
-            "\n[discord] skipped (this moltbot build does not list discord in `channels add --help`)\n";
+            "\n[discord] skipped (this openclaw build does not list discord in `channels add --help`)\n";
         } else {
           const token = payload.discordToken.trim();
           const cfgObj = {
@@ -551,7 +621,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
             },
           };
           const set = await runCmd(
-            MOLTBOT_NODE,
+            OPENCLAW_NODE,
             clawArgs([
               "config",
               "set",
@@ -561,7 +631,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
             ]),
           );
           const get = await runCmd(
-            MOLTBOT_NODE,
+            OPENCLAW_NODE,
             clawArgs(["config", "get", "channels.discord"]),
           );
           extra += `\n[discord config] exit=${set.code} (output ${set.output.length} chars)\n${set.output || "(no output)"}`;
@@ -572,7 +642,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
       if (payload.slackBotToken?.trim() || payload.slackAppToken?.trim()) {
         if (!supports("slack")) {
           extra +=
-            "\n[slack] skipped (this moltbot build does not list slack in `channels add --help`)\n";
+            "\n[slack] skipped (this openclaw build does not list slack in `channels add --help`)\n";
         } else {
           const cfgObj = {
             enabled: true,
@@ -580,7 +650,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
             appToken: payload.slackAppToken?.trim() || undefined,
           };
           const set = await runCmd(
-            MOLTBOT_NODE,
+            OPENCLAW_NODE,
             clawArgs([
               "config",
               "set",
@@ -590,7 +660,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
             ]),
           );
           const get = await runCmd(
-            MOLTBOT_NODE,
+            OPENCLAW_NODE,
             clawArgs(["config", "get", "channels.slack"]),
           );
           extra += `\n[slack config] exit=${set.code} (output ${set.output.length} chars)\n${set.output || "(no output)"}`;
@@ -615,9 +685,9 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
 });
 
 app.get("/setup/api/debug", requireSetupAuth, async (_req, res) => {
-  const v = await runCmd(MOLTBOT_NODE, clawArgs(["--version"]));
+  const v = await runCmd(OPENCLAW_NODE, clawArgs(["--version"]));
   const help = await runCmd(
-    MOLTBOT_NODE,
+    OPENCLAW_NODE,
     clawArgs(["channels", "add", "--help"]),
   );
   res.json({
@@ -627,15 +697,15 @@ app.get("/setup/api/debug", requireSetupAuth, async (_req, res) => {
       stateDir: STATE_DIR,
       workspaceDir: WORKSPACE_DIR,
       configPath: configPath(),
-      gatewayTokenFromEnv: Boolean(process.env.MOLTBOT_GATEWAY_TOKEN?.trim()),
+      gatewayTokenFromEnv: Boolean(process.env.OPENCLAW_GATEWAY_TOKEN?.trim()),
       gatewayTokenPersisted: fs.existsSync(
         path.join(STATE_DIR, "gateway.token"),
       ),
       railwayCommit: process.env.RAILWAY_GIT_COMMIT_SHA || null,
     },
-    moltbot: {
-      entry: MOLTBOT_ENTRY,
-      node: MOLTBOT_NODE,
+    openclaw: {
+      entry: OPENCLAW_ENTRY,
+      node: OPENCLAW_NODE,
       version: v.output.trim(),
       channelsAddHelpIncludesTelegram: help.output.includes("telegram"),
     },
@@ -650,7 +720,7 @@ app.post("/setup/api/pairing/approve", requireSetupAuth, async (req, res) => {
       .json({ ok: false, error: "Missing channel or code" });
   }
   const r = await runCmd(
-    MOLTBOT_NODE,
+    OPENCLAW_NODE,
     clawArgs(["pairing", "approve", String(channel), String(code)]),
   );
   return res
@@ -678,11 +748,11 @@ app.get("/setup/export", requireSetupAuth, async (_req, res) => {
   res.setHeader("content-type", "application/gzip");
   res.setHeader(
     "content-disposition",
-    `attachment; filename="moltbot-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.tar.gz"`,
+    `attachment; filename="openclaw-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.tar.gz"`,
   );
 
   // Prefer exporting from a common /data root so archives are easy to inspect and restore.
-  // This preserves dotfiles like /data/.moltbot/moltbot.json.
+  // This preserves dotfiles like /data/.openclaw/openclaw.json.
   const stateAbs = path.resolve(STATE_DIR);
   const workspaceAbs = path.resolve(WORKSPACE_DIR);
 
@@ -694,7 +764,7 @@ app.get("/setup/export", requireSetupAuth, async (_req, res) => {
 
   if (underData(stateAbs) && underData(workspaceAbs)) {
     cwd = dataRoot;
-    // We export relative to /data so the archive contains: .moltbot/... and workspace/...
+    // We export relative to /data so the archive contains: .openclaw/... and workspace/...
     paths = [
       path.relative(dataRoot, stateAbs) || ".",
       path.relative(dataRoot, workspaceAbs) || ".",
@@ -734,12 +804,12 @@ proxy.on("error", (err, _req, _res) => {
 
 // Inject auth token into HTTP proxy requests
 proxy.on("proxyReq", (proxyReq, req, res) => {
-  proxyReq.setHeader("Authorization", `Bearer ${MOLTBOT_GATEWAY_TOKEN}`);
+  proxyReq.setHeader("Authorization", `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
 });
 
 // Inject auth token into WebSocket upgrade requests
 proxy.on("proxyReqWs", (proxyReq, req, socket, options, head) => {
-  proxyReq.setHeader("Authorization", `Bearer ${MOLTBOT_GATEWAY_TOKEN}`);
+  proxyReq.setHeader("Authorization", `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
 });
 
 app.use(async (req, res) => {
