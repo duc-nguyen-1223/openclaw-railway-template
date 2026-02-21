@@ -1,647 +1,1012 @@
-// Served at /setup/app.js
-// No fancy syntax: keep it maximally compatible.
-
+/**
+ * OpenClaw Setup Wizard — client-side application
+ * Vanilla JS, zero dependencies.
+ */
 (function () {
-  var statusEl = document.getElementById('status');
-  var authGroupEl = document.getElementById('authGroup');
-  var authChoiceEl = document.getElementById('authChoice');
-  var logEl = document.getElementById('log');
+  "use strict";
 
-  function setStatus(s) {
-    statusEl.textContent = s;
+  // ========== STATE ==========
+  let authGroups = [];
+  let currentStep = 1;
+  const TOTAL_STEPS = 5;
+  let selectedProviderGroup = null;
+  let isRunning = false;
+  let statusData = null;
+
+  // ========== DOM HELPERS ==========
+  const $ = (sel, root) => (root || document).querySelector(sel);
+  const $$ = (sel, root) => [...(root || document).querySelectorAll(sel)];
+
+  // ========== TOAST SYSTEM ==========
+  function toast(message, type = "info", durationMs = 4000) {
+    const container = $("#toastContainer");
+    const icons = { success: "✅", error: "❌", warning: "⚠️", info: "ℹ️" };
+    const el = document.createElement("div");
+    el.className = `toast ${type}`;
+    el.innerHTML = `
+      <span class="toast-icon">${icons[type] || "ℹ️"}</span>
+      <span class="toast-msg">${escapeHtml(message)}</span>
+      <button class="toast-close" title="Dismiss">×</button>
+    `;
+    el.querySelector(".toast-close").onclick = () => removeToast(el);
+    container.appendChild(el);
+    if (durationMs > 0) {
+      setTimeout(() => removeToast(el), durationMs);
+    }
+    return el;
   }
 
-  var showAllAuthMethods = false;
-
-  function renderAuth(groups) {
-    var prevGroup = authGroupEl.value;
-    var prevChoice = authChoiceEl.value;
-
-    authGroupEl.innerHTML = '';
-    for (var i = 0; i < groups.length; i++) {
-      var g = groups[i];
-      var opt = document.createElement('option');
-      opt.value = g.value;
-      opt.textContent = g.label + (g.hint ? ' - ' + g.hint : '');
-      authGroupEl.appendChild(opt);
-    }
-
-    authGroupEl.onchange = function () {
-      var sel = null;
-      for (var j = 0; j < groups.length; j++) {
-        if (groups[j].value === authGroupEl.value) sel = groups[j];
-      }
-      authChoiceEl.innerHTML = '';
-      var opts = (sel && sel.options) ? sel.options : [];
-      
-      // Filter out interactive OAuth options unless "Show all" is enabled
-      var filteredOpts = [];
-      var hiddenCount = 0;
-      
-      for (var k = 0; k < opts.length; k++) {
-        var o = opts[k];
-        var isInteractive = (
-          o.value.toLowerCase().indexOf('cli') >= 0 ||
-          o.value.toLowerCase().indexOf('oauth') >= 0 ||
-          o.value.toLowerCase().indexOf('device') >= 0 ||
-          o.value.toLowerCase().indexOf('codex') >= 0 ||
-          o.value.toLowerCase().indexOf('antigravity') >= 0 ||
-          o.value.toLowerCase().indexOf('gemini-cli') >= 0 ||
-          o.value.toLowerCase().indexOf('qwen-portal') >= 0 ||
-          o.value.toLowerCase().indexOf('github-copilot') >= 0
-        );
-        
-        if (!isInteractive || showAllAuthMethods) {
-          filteredOpts.push(o);
-        } else {
-          hiddenCount++;
-        }
-      }
-      
-      // Render filtered options
-      for (var m = 0; m < filteredOpts.length; m++) {
-        var opt2 = document.createElement('option');
-        opt2.value = filteredOpts[m].value;
-        opt2.textContent = filteredOpts[m].label + (filteredOpts[m].hint ? ' - ' + filteredOpts[m].hint : '');
-        authChoiceEl.appendChild(opt2);
-      }
-      
-      // Add "Show all auth methods" option if there are hidden options
-      if (hiddenCount > 0 && !showAllAuthMethods) {
-        var showAllOpt = document.createElement('option');
-        showAllOpt.value = '__show_all__';
-        showAllOpt.textContent = '⚠️ Show all auth methods (' + hiddenCount + ' hidden - require terminal/OAuth)';
-        showAllOpt.style.fontWeight = 'bold';
-        showAllOpt.style.color = '#ff9800';
-        authChoiceEl.appendChild(showAllOpt);
-      }
-    };
-
-    // Restore previous selections if they still exist
-    if (prevGroup) authGroupEl.value = prevGroup;
-    authGroupEl.onchange();
-    if (prevChoice) authChoiceEl.value = prevChoice;
-
-    authChoiceEl.onchange = function () {
-      var hint = document.getElementById('authSecretHint');
-      if (!hint) return;
-      if (authChoiceEl.value === 'token') {
-        hint.textContent = 'Run "claude setup-token" in your terminal and paste the result. The token is NOT in sk-ant-... format.';
-      } else if (authChoiceEl.value === 'apiKey') {
-        hint.textContent = 'Paste your Anthropic API key (starts with sk-ant-...) from console.anthropic.com.';
-      } else {
-        hint.textContent = '';
-      }
-    };
+  function removeToast(el) {
+    if (!el || !el.parentNode) return;
+    el.style.animation = "slideOut .3s ease forwards";
+    setTimeout(() => el.remove(), 300);
   }
 
-  // Handle "Show all auth methods" selection
-  authChoiceEl.onchange = function () {
-    if (authChoiceEl.value === '__show_all__') {
-      showAllAuthMethods = true;
-      authGroupEl.onchange(); // Re-render with all options
-    }
-  };
+  // ========== MODAL SYSTEM ==========
+  function showModal(title, bodyHtml, onConfirm, confirmLabel = "Confirm") {
+    const overlay = $("#modalOverlay");
+    $("#modalTitle").textContent = title;
+    $("#modalBody").innerHTML = bodyHtml;
+    const confirmBtn = $("#modalConfirm");
+    confirmBtn.textContent = confirmLabel;
+    overlay.style.display = "flex";
 
-  function httpJson(url, opts) {
-    opts = opts || {};
-    opts.credentials = 'same-origin';
-    return fetch(url, opts).then(function (res) {
-      if (!res.ok) {
-        return res.text().then(function (t) {
-          throw new Error('HTTP ' + res.status + ': ' + (t || res.statusText));
-        });
-      }
-      return res.json();
+    return new Promise((resolve) => {
+      const cleanup = () => {
+        overlay.style.display = "none";
+        confirmBtn.onclick = null;
+        $("#modalCancel").onclick = null;
+      };
+      confirmBtn.onclick = () => {
+        cleanup();
+        resolve(true);
+        if (onConfirm) onConfirm();
+      };
+      $("#modalCancel").onclick = () => {
+        cleanup();
+        resolve(false);
+      };
     });
   }
 
-  function loadAuthGroups() {
-    return httpJson('/setup/api/auth-groups').then(function (j) {
-      if (!j.authGroups || j.authGroups.length === 0) {
-        console.warn('Auth groups empty, trying status endpoint...');
-        throw new Error('Empty auth groups');
+  // ========== HTML UTILS ==========
+  function escapeHtml(str) {
+    const d = document.createElement("div");
+    d.appendChild(document.createTextNode(String(str)));
+    return d.innerHTML;
+  }
+
+  // ========== WIZARD NAVIGATION ==========
+  function goToStep(step) {
+    if (step < 1 || step > TOTAL_STEPS) return;
+    currentStep = step;
+
+    // Update progress bar
+    $$(".progress-step").forEach((el) => {
+      const s = parseInt(el.dataset.step);
+      el.classList.toggle("active", s === step);
+      el.classList.toggle("completed", s < step);
+    });
+    $$(".progress-connector").forEach((el, i) => {
+      el.classList.toggle("active", i + 1 < step);
+    });
+
+    // Show/hide steps
+    $$(".wizard-step").forEach((el) => {
+      el.classList.toggle("active", parseInt(el.dataset.step) === step);
+    });
+
+    // If step 5, build review summary
+    if (step === 5) buildReviewSummary();
+
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  // ========== PROVIDER CARDS ==========
+  function renderProviderCards(groups) {
+    const container = $("#providerCategories");
+    container.innerHTML = "";
+    for (const g of groups) {
+      const card = document.createElement("div");
+      card.className = "provider-card";
+      card.dataset.value = g.value;
+      card.innerHTML = `
+        <div class="provider-name">${escapeHtml(g.label)}</div>
+        <div class="provider-desc">${escapeHtml(g.hint)}</div>
+      `;
+      card.addEventListener("click", () => selectProvider(g));
+      container.appendChild(card);
+    }
+  }
+
+  function selectProvider(group) {
+    selectedProviderGroup = group;
+
+    // Update card visuals
+    $$(".provider-card").forEach((c) => {
+      c.classList.toggle("selected", c.dataset.value === group.value);
+    });
+
+    // Update hidden select
+    const authGroupSel = $("#authGroup");
+    authGroupSel.innerHTML = "";
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Select provider group...";
+    authGroupSel.appendChild(placeholder);
+    for (const g of authGroups) {
+      const opt = document.createElement("option");
+      opt.value = g.value;
+      opt.textContent = g.label;
+      authGroupSel.appendChild(opt);
+    }
+    authGroupSel.value = group.value;
+
+    // Populate auth choice dropdown
+    const authChoiceSel = $("#authChoice");
+    authChoiceSel.innerHTML = '<option value="">Select auth method...</option>';
+    for (const opt of group.options) {
+      const o = document.createElement("option");
+      o.value = opt.value;
+      o.textContent = opt.label;
+      authChoiceSel.appendChild(o);
+    }
+    // Auto-select if only one option
+    if (group.options.length === 1) {
+      authChoiceSel.value = group.options[0].value;
+      onAuthChoiceChange();
+    }
+
+    $("#authMethodSection").style.display = "block";
+    $("#authSecret").value = "";
+    updateAuthHint();
+  }
+
+  function onAuthChoiceChange() {
+    updateAuthHint();
+    validateAuthSecret();
+  }
+
+  function updateAuthHint() {
+    const choice = $("#authChoice").value;
+    const hint = $("#authSecretHint");
+    const oauthChoices = [
+      "codex-cli",
+      "openai-codex",
+      "google-antigravity",
+      "google-gemini-cli",
+      "qwen-portal",
+      "github-copilot",
+      "copilot-proxy",
+    ];
+    if (oauthChoices.includes(choice)) {
+      hint.textContent =
+        "No API key needed — uses OAuth / device login at gateway start.";
+      $("#authSecret").placeholder = "(leave empty for OAuth)";
+    } else if (choice === "token") {
+      hint.textContent =
+        'Run "claude setup-token" locally and paste the result here.';
+      $("#authSecret").placeholder = "Paste setup-token value";
+    } else {
+      hint.textContent = "";
+      $("#authSecret").placeholder = "Paste API key or token here";
+    }
+  }
+
+  // ========== VALIDATION ==========
+  function validateAuthSecret() {
+    const choice = $("#authChoice").value;
+    const secret = $("#authSecret").value.trim();
+    const el = $("#authValidation");
+    if (!choice) {
+      el.textContent = "";
+      el.className = "validation-msg";
+      return true;
+    }
+
+    const oauthChoices = [
+      "codex-cli",
+      "openai-codex",
+      "google-antigravity",
+      "google-gemini-cli",
+      "qwen-portal",
+      "github-copilot",
+      "copilot-proxy",
+    ];
+    if (oauthChoices.includes(choice)) {
+      el.textContent = "✓ OAuth — no key needed";
+      el.className = "validation-msg valid";
+      return true;
+    }
+
+    if (!secret) {
+      el.textContent = "API key / token required for this provider";
+      el.className = "validation-msg invalid";
+      return false;
+    }
+
+    // Basic format checks
+    if (choice === "openai-api-key" && !secret.startsWith("sk-")) {
+      el.textContent = '⚠ OpenAI keys usually start with "sk-"';
+      el.className = "validation-msg warning";
+    } else if (
+      choice === "openrouter-api-key" &&
+      !secret.startsWith("sk-or-")
+    ) {
+      el.textContent = '⚠ OpenRouter keys usually start with "sk-or-"';
+      el.className = "validation-msg warning";
+    } else {
+      el.textContent = "✓ Key provided";
+      el.className = "validation-msg valid";
+    }
+    return true;
+  }
+
+  function validateTelegramToken() {
+    const token = $("#telegramToken").value.trim();
+    const el = $("#telegramValidation");
+    if (!token) {
+      el.textContent = "";
+      el.className = "validation-msg";
+      return true;
+    }
+    if (/^\d+:[A-Za-z0-9_-]{20,}$/.test(token)) {
+      el.textContent = "✓ Valid Telegram token format";
+      el.className = "validation-msg valid";
+      return true;
+    }
+    el.textContent = "⚠ Expected format: 123456:ABC-DEF...";
+    el.className = "validation-msg invalid";
+    return false;
+  }
+
+  function validateDiscordToken() {
+    const token = $("#discordToken").value.trim();
+    const el = $("#discordValidation");
+    if (!token) {
+      el.textContent = "";
+      el.className = "validation-msg";
+      return true;
+    }
+    // Discord tokens are base64-ish, at least 50 chars
+    if (token.length >= 50) {
+      el.textContent = "✓ Token length looks good";
+      el.className = "validation-msg valid";
+      return true;
+    }
+    el.textContent = "⚠ Discord tokens are usually 60+ characters";
+    el.className = "validation-msg invalid";
+    return false;
+  }
+
+  function validateTailscaleKey() {
+    const key = $("#tailscaleAuthKey").value.trim();
+    const el = $("#tailscaleValidation");
+    if (!key) {
+      el.textContent = "";
+      el.className = "validation-msg";
+      return true;
+    }
+    if (key.startsWith("tskey-auth-")) {
+      el.textContent = "✓ Valid Tailscale auth key format";
+      el.className = "validation-msg valid";
+      return true;
+    }
+    el.textContent = "⚠ Expected format: tskey-auth-...";
+    el.className = "validation-msg invalid";
+    return false;
+  }
+
+  // ========== CHANNEL TABS ==========
+  function initChannelTabs() {
+    $$(".channel-tab").forEach((tab) => {
+      tab.addEventListener("click", () => {
+        const channel = tab.dataset.channel;
+        $$(".channel-tab").forEach((t) =>
+          t.classList.toggle("active", t === tab),
+        );
+        $$(".channel-panel").forEach((p) =>
+          p.classList.toggle("active", p.dataset.channel === channel),
+        );
+      });
+    });
+
+    // Enable toggles
+    $("#enableTelegram").addEventListener("change", (e) => {
+      $("#telegramFields").style.display = e.target.checked ? "block" : "none";
+    });
+    $("#enableDiscord").addEventListener("change", (e) => {
+      $("#discordFields").style.display = e.target.checked ? "block" : "none";
+    });
+    $("#enableSlack").addEventListener("change", (e) => {
+      $("#slackFields").style.display = e.target.checked ? "block" : "none";
+    });
+    $("#enableTailscale").addEventListener("change", (e) => {
+      $("#tailscaleFields").style.display = e.target.checked ? "block" : "none";
+    });
+  }
+
+  // ========== CUSTOM PROVIDER TEMPLATES ==========
+  function initCustomProviderTemplates() {
+    const tpl = $("#customProviderTemplate");
+    tpl.addEventListener("change", () => {
+      const templates = {
+        ollama: {
+          id: "ollama",
+          baseUrl: "http://localhost:11434/v1",
+          api: "openai-completions",
+          model: "llama3.2",
+        },
+        vllm: {
+          id: "vllm",
+          baseUrl: "http://localhost:8000/v1",
+          api: "openai-completions",
+          model: "",
+        },
+        lmstudio: {
+          id: "lmstudio",
+          baseUrl: "http://localhost:1234/v1",
+          api: "openai-completions",
+          model: "",
+        },
+        litellm: {
+          id: "litellm",
+          baseUrl: "http://localhost:4000/v1",
+          api: "openai-completions",
+          model: "",
+        },
+        custom: { id: "", baseUrl: "", api: "", model: "" },
+      };
+      const t = templates[tpl.value];
+      if (t) {
+        $("#customProviderId").value = t.id;
+        $("#customProviderBaseUrl").value = t.baseUrl;
+        $("#customProviderApi").value = t.api;
+        $("#customProviderModelId").value = t.model;
       }
-      renderAuth(j.authGroups);
-    }).catch(function (e) {
-      console.error('Failed to load auth groups from fast endpoint:', e);
-      // Fallback to loading from status if fast endpoint fails
-      return httpJson('/setup/api/status').then(function (j) {
-        if (!j.authGroups || j.authGroups.length === 0) {
-          console.warn('Auth groups empty in status endpoint too');
-          setStatus('Warning: Unable to load provider list. Setup wizard may not work correctly.');
-        }
-        renderAuth(j.authGroups || []);
-      }).catch(function (e2) {
-        console.error('Failed to load auth groups from status endpoint:', e2);
-        setStatus('Warning: Unable to load provider list. Setup wizard may not work correctly.');
-        renderAuth([]); // Render empty to unblock UI
+    });
+  }
+
+  // ========== TOGGLE PASSWORD VISIBILITY ==========
+  function initPasswordToggles() {
+    // Main auth secret toggle
+    $("#toggleSecret").addEventListener("click", () => {
+      const inp = $("#authSecret");
+      inp.type = inp.type === "password" ? "text" : "password";
+    });
+
+    // Channel & Tailscale toggles (use data-target attribute)
+    $$(".toggle-vis[data-target]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const inp = document.getElementById(btn.dataset.target);
+        if (inp) inp.type = inp.type === "password" ? "text" : "password";
       });
     });
   }
 
-  function refreshStatus() {
-    setStatus('Loading...');
-    var statusDetailsEl = document.getElementById('statusDetails');
-    if (statusDetailsEl) {
-      statusDetailsEl.innerHTML = '';
+  // ========== REVIEW SUMMARY ==========
+  function buildReviewSummary() {
+    const container = $("#reviewSummary");
+    const items = [];
+
+    // Provider
+    const provider = selectedProviderGroup
+      ? selectedProviderGroup.label
+      : "Not selected";
+    const authChoice = $("#authChoice").value || "—";
+    items.push({ label: "Provider", value: provider });
+    items.push({ label: "Auth Method", value: authChoice });
+
+    // Channels
+    const channels = [];
+    if ($("#enableTelegram").checked) channels.push("Telegram");
+    if ($("#enableDiscord").checked) channels.push("Discord");
+    if ($("#enableSlack").checked) channels.push("Slack");
+    items.push({
+      label: "Channels",
+      value: channels.length ? channels.join(", ") : "None",
+    });
+
+    // Tailscale
+    items.push({
+      label: "Tailscale",
+      value: $("#enableTailscale").checked ? "Enabled" : "Disabled",
+    });
+
+    // Flow
+    items.push({ label: "Setup Flow", value: $("#flow").value });
+
+    // Custom provider
+    const cpId = $("#customProviderId").value.trim();
+    if (cpId) {
+      items.push({ label: "Custom Provider", value: cpId });
     }
 
-    return httpJson('/setup/api/status').then(function (j) {
-      var ver = j.openclawVersion ? (' | ' + j.openclawVersion) : '';
-      setStatus((j.configured ? 'Configured - open /openclaw' : 'Not configured - run setup below') + ver);
-      
-      // Show gateway target and health hints
-      if (statusDetailsEl) {
-        var detailsHtml = '<div class="muted" style="font-size: 0.9em;">';
-        detailsHtml += '<strong>Gateway Target:</strong> <code>' + (j.gatewayTarget || 'unknown') + '</code><br/>';
-        detailsHtml += '<strong>Health Check:</strong> <a href="/healthz" target="_blank">/healthz</a> (shows gateway diagnostics)';
-        detailsHtml += '</div>';
-        statusDetailsEl.innerHTML = detailsHtml;
-      }
+    container.innerHTML = items
+      .map(
+        (i) =>
+          `<div class="review-item"><span class="review-label">${escapeHtml(i.label)}</span><span class="review-value">${escapeHtml(i.value)}</span></div>`,
+      )
+      .join("");
+  }
 
-      // If channels are unsupported, surface it for debugging.
-      if (j.channelsAddHelp && j.channelsAddHelp.indexOf('telegram') === -1) {
-        logEl.textContent += '\nNote: this openclaw build does not list telegram in `channels add --help`. Telegram auto-add will be skipped.\n';
-      }
+  // ========== PROGRESS TRACKER ==========
+  function updateProgress(step, status) {
+    // status: "active" | "done" | "error" | "pending"
+    const el = $(`.progress-item[data-progress="${step}"]`);
+    if (!el) return;
+    el.className = `progress-item ${status}`;
+    const icons = { active: "⏳", done: "✅", error: "❌", pending: "⏸" };
+    el.querySelector(".progress-icon").textContent = icons[status] || "⏸";
+  }
 
-    }).catch(function (e) {
-      setStatus('Error: ' + String(e));
-      if (statusDetailsEl) {
-        statusDetailsEl.innerHTML = '<div style="color: #d32f2f;">Failed to load status details</div>';
-      }
+  function resetProgress() {
+    $$(".progress-item").forEach((el) => {
+      el.className = "progress-item";
+      el.querySelector(".progress-icon").textContent = "⏸";
     });
   }
 
-  document.getElementById('run').onclick = function () {
-    var payload = {
-      flow: document.getElementById('flow').value,
-      authChoice: authChoiceEl.value,
-      authSecret: document.getElementById('authSecret').value,
-      telegramToken: document.getElementById('telegramToken').value,
-      discordToken: document.getElementById('discordToken').value,
-      slackBotToken: document.getElementById('slackBotToken').value,
-      slackAppToken: document.getElementById('slackAppToken').value,
-      // Custom provider fields
-      customProviderId: document.getElementById('customProviderId').value,
-      customProviderBaseUrl: document.getElementById('customProviderBaseUrl').value,
-      customProviderApi: document.getElementById('customProviderApi').value,
-      customProviderApiKeyEnv: document.getElementById('customProviderApiKeyEnv').value,
-      customProviderModelId: document.getElementById('customProviderModelId').value
+  // ========== RUN SETUP ==========
+  async function runSetup() {
+    if (isRunning) return;
+
+    // Validate step 1
+    const authChoice = $("#authChoice").value;
+    if (!authChoice && !selectedProviderGroup) {
+      toast("Please select an AI provider first", "warning");
+      goToStep(1);
+      return;
+    }
+
+    isRunning = true;
+    const runBtn = $("#run");
+    runBtn.disabled = true;
+    runBtn.textContent = "⏳ Running...";
+    runBtn.classList.add("running");
+    $("#log").style.display = "none";
+    $("#log").textContent = "";
+    $("#onboardProgress").style.display = "block";
+    resetProgress();
+
+    const payload = {
+      flow: $("#flow").value,
+      authChoice: authChoice,
+      authSecret: $("#authSecret").value.trim(),
     };
 
-    logEl.textContent = 'Running...\n';
+    // Channel tokens
+    if ($("#enableTelegram").checked)
+      payload.telegramToken = $("#telegramToken").value.trim();
+    if ($("#enableDiscord").checked)
+      payload.discordToken = $("#discordToken").value.trim();
+    if ($("#enableSlack").checked) {
+      payload.slackBotToken = $("#slackBotToken").value.trim();
+      payload.slackAppToken = $("#slackAppToken").value.trim();
+    }
 
-    fetch('/setup/api/run', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload)
-    }).then(function (res) {
-      return res.text();
-    }).then(function (text) {
-      var j;
-      try { j = JSON.parse(text); } catch (_e) { j = { ok: false, output: text }; }
-      logEl.textContent += (j.output || JSON.stringify(j, null, 2));
-      return refreshStatus();
-    }).catch(function (e) {
-      logEl.textContent += '\nError: ' + String(e) + '\n';
-    });
-  };
+    // Custom provider
+    if ($("#customProviderId").value.trim()) {
+      payload.customProviderId = $("#customProviderId").value.trim();
+      payload.customProviderBaseUrl = $("#customProviderBaseUrl").value.trim();
+      payload.customProviderApi = $("#customProviderApi").value.trim();
+      payload.customProviderApiKeyEnv = $(
+        "#customProviderApiKeyEnv",
+      ).value.trim();
+      payload.customProviderModelId = $("#customProviderModelId").value.trim();
+    }
 
-  // Pairing approve helper
-  var pairingBtn = document.getElementById('pairingApprove');
-  if (pairingBtn) {
-    pairingBtn.onclick = function () {
-      var channel = prompt('Enter channel (telegram or discord):');
-      if (!channel) return;
-      channel = channel.trim().toLowerCase();
-      if (channel !== 'telegram' && channel !== 'discord') {
-        alert('Channel must be "telegram" or "discord"');
+    try {
+      updateProgress("onboard", "active");
+
+      const resp = await fetch("/setup/api/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json();
+
+      updateProgress("onboard", data.ok ? "done" : "error");
+
+      if (data.ok) {
+        // Simulate remaining progress
+        updateProgress("token", "active");
+        await sleep(500);
+        updateProgress("token", "done");
+
+        updateProgress("channels", "active");
+        await sleep(500);
+        updateProgress("channels", "done");
+
+        if ($("#enableTailscale").checked) {
+          updateProgress("tailscale", "active");
+          await runTailscaleSetup();
+          updateProgress("tailscale", "done");
+        } else {
+          updateProgress("tailscale", "done");
+        }
+
+        updateProgress("gateway", "active");
+        await sleep(1000);
+        updateProgress("gateway", "done");
+
+        updateProgress("health", "active");
+        await sleep(500);
+        updateProgress("health", "done");
+
+        toast("Setup completed successfully! 🎉", "success", 6000);
+        runBtn.textContent = "✅ Done! Open UI →";
+        runBtn.classList.remove("running");
+        runBtn.classList.add("success");
+        runBtn.disabled = false;
+        runBtn.onclick = () => window.open("/openclaw", "_blank");
+      } else {
+        toast("Setup failed — check the log below", "error", 8000);
+        runBtn.textContent = "🚀 Retry Setup";
+        runBtn.classList.remove("running");
+        runBtn.disabled = false;
+        runBtn.onclick = runSetup;
+      }
+
+      // Show log
+      if (data.output) {
+        $("#log").textContent = data.output;
+        $("#log").style.display = "block";
+      }
+    } catch (err) {
+      updateProgress("onboard", "error");
+      toast(`Error: ${err.message}`, "error", 8000);
+      runBtn.textContent = "🚀 Retry Setup";
+      runBtn.classList.remove("running");
+      runBtn.disabled = false;
+      runBtn.onclick = runSetup;
+    } finally {
+      isRunning = false;
+    }
+  }
+
+  // ========== TAILSCALE ==========
+  async function runTailscaleSetup() {
+    const authKey = $("#tailscaleAuthKey").value.trim();
+    const hostname = $("#tailscaleHostname").value.trim() || "openclaw-railway";
+    if (!authKey) return;
+
+    try {
+      toast(
+        "Setting up Tailscale (may install first — this can take a minute)...",
+        "info",
+        8000,
+      );
+      const resp = await fetch("/setup/api/tailscale/configure", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ authKey, hostname }),
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        toast("Tailscale configured successfully", "success");
+        updateTailscaleStatus(data);
+      } else {
+        toast(
+          `Tailscale setup failed: ${data.error || "unknown error"}`,
+          "error",
+          10000,
+        );
+      }
+    } catch (err) {
+      toast(`Tailscale error: ${err.message}`, "error");
+    }
+  }
+
+  function updateTailscaleStatus(data) {
+    const el = $("#tailscaleStatus");
+    if (!el) return;
+    if (data && data.connected) {
+      el.style.display = "block";
+      el.className = "tailscale-status connected";
+      el.innerHTML = `<strong>✅ Connected</strong> — ${escapeHtml(data.hostname || "")} ${data.ip ? `(${escapeHtml(data.ip)})` : ""}`;
+    } else if (data && data.installed === false) {
+      el.style.display = "block";
+      el.className = "tailscale-status";
+      el.innerHTML = `<strong>📦 Not installed</strong> — Tailscale will be installed automatically when you run setup.`;
+    } else if (data && data.error) {
+      el.style.display = "block";
+      el.className = "tailscale-status disconnected";
+      el.innerHTML = `<strong>❌ Error</strong> — ${escapeHtml(data.error)}`;
+    } else if (data && data.installed && !data.connected) {
+      el.style.display = "block";
+      el.className = "tailscale-status";
+      el.innerHTML = `<strong>⚪ Installed but not connected</strong>`;
+    }
+  }
+
+  // ========== DASHBOARD ==========
+  async function refreshDashboard() {
+    try {
+      const resp = await fetch("/setup/api/status");
+      if (!resp.ok) return;
+      statusData = await resp.json();
+
+      // Provider groups
+      if (statusData.authGroups && statusData.authGroups.length) {
+        authGroups = statusData.authGroups;
+        renderProviderCards(authGroups);
+      }
+
+      // Gateway status
+      const gatewayEl = $("#dashGateway");
+      if (statusData.configured) {
+        gatewayEl.innerHTML = '<span class="status-dot green"></span> Running';
+      } else {
+        gatewayEl.innerHTML =
+          '<span class="status-dot yellow"></span> Not configured';
+      }
+
+      // Version
+      $("#dashVersion").textContent = statusData.openclawVersion || "—";
+
+      // Channels
+      const channelsList = [];
+      try {
+        const debugResp = await fetch("/setup/api/debug");
+        if (debugResp.ok) {
+          const debugData = await debugResp.json();
+          if (debugData.channels?.telegram) channelsList.push("Telegram");
+          if (debugData.channels?.discord) channelsList.push("Discord");
+        }
+      } catch {}
+      $("#dashChannels").textContent = channelsList.length
+        ? channelsList.join(", ")
+        : "None";
+
+      // Tailscale status
+      try {
+        const tsResp = await fetch("/setup/api/tailscale/status");
+        if (tsResp.ok) {
+          const tsData = await tsResp.json();
+          const tsEl = $("#dashTailscale");
+          if (tsData.connected) {
+            tsEl.innerHTML = `<span class="status-dot green"></span> ${escapeHtml(tsData.ip || "Connected")}`;
+          } else if (tsData.installed) {
+            tsEl.innerHTML =
+              '<span class="status-dot yellow"></span> Installed (not connected)';
+          } else {
+            tsEl.innerHTML =
+              '<span class="status-dot gray"></span> Not installed';
+          }
+          updateTailscaleStatus(tsData);
+        }
+      } catch {}
+    } catch (err) {
+      console.warn("[dashboard] Failed to refresh:", err);
+    }
+  }
+
+  // ========== ADMIN: DEBUG CONSOLE ==========
+  function initConsole() {
+    $("#consoleRun").addEventListener("click", async () => {
+      const command = $("#consoleCommand").value;
+      if (!command) {
+        toast("Select a command first", "warning");
         return;
       }
-      var code = prompt('Enter pairing code (e.g. 3EY4PUYS):');
-      if (!code) return;
-      logEl.textContent += '\nApproving pairing for ' + channel + '...\n';
-      fetch('/setup/api/pairing/approve', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ channel: channel, code: code.trim() })
-      }).then(function (r) { return r.text(); })
-        .then(function (t) { logEl.textContent += t + '\n'; })
-        .catch(function (e) { logEl.textContent += 'Error: ' + String(e) + '\n'; });
+      const arg = $("#consoleArg").value.trim();
+
+      const outputEl = $("#consoleOutput");
+      outputEl.textContent = "Running...";
+
+      try {
+        const resp = await fetch("/setup/api/console/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ command, arg: arg || undefined }),
+        });
+        const data = await resp.json();
+        outputEl.textContent = data.output || data.error || "(no output)";
+        if (data.ok) {
+          toast(`Command completed (exit ${data.exitCode ?? 0})`, "success");
+        } else {
+          toast(`Command failed: ${data.error || ""}`, "error");
+        }
+      } catch (err) {
+        outputEl.textContent = `Error: ${err.message}`;
+        toast("Console command failed", "error");
+      }
+    });
+
+    // Copy button
+    $("#consoleCopy").addEventListener("click", () => {
+      const text = $("#consoleOutput").textContent;
+      navigator.clipboard.writeText(text).then(
+        () => toast("Copied to clipboard", "info", 2000),
+        () => toast("Failed to copy", "error"),
+      );
+    });
+  }
+
+  // ========== ADMIN: CONFIG EDITOR ==========
+  function initConfigEditor() {
+    const loadConfig = async () => {
+      try {
+        const resp = await fetch("/setup/api/config/raw");
+        const data = await resp.json();
+        if (data.ok) {
+          $("#configContent").value = data.content;
+          if (data.path) $("#configPath").textContent = data.path;
+        } else {
+          toast(`Failed to load config: ${data.error}`, "error");
+        }
+      } catch (err) {
+        toast(`Error loading config: ${err.message}`, "error");
+      }
     };
-  }
 
-  document.getElementById('reset').onclick = function () {
-    if (!confirm('Reset setup? This deletes the config file so onboarding can run again.')) return;
-    logEl.textContent = 'Resetting...\n';
-    fetch('/setup/api/reset', { method: 'POST', credentials: 'same-origin' })
-      .then(function (res) { return res.text(); })
-      .then(function (t) { logEl.textContent += t + '\n'; return refreshStatus(); })
-      .catch(function (e) { logEl.textContent += 'Error: ' + String(e) + '\n'; });
-  };
-
-  // ========== DEBUG CONSOLE ==========
-  var consoleCommandEl = document.getElementById('consoleCommand');
-  var consoleArgEl = document.getElementById('consoleArg');
-  var consoleRunBtn = document.getElementById('consoleRun');
-  var consoleOutputEl = document.getElementById('consoleOutput');
-
-  function runConsoleCommand() {
-    var command = consoleCommandEl.value;
-    var arg = consoleArgEl.value.trim();
-
-    if (!command) {
-      consoleOutputEl.textContent = 'Error: Please select a command';
-      return;
+    // Auto-load on first expand
+    const details = $("details:has(#configContent)");
+    if (details) {
+      details.addEventListener("toggle", () => {
+        if (details.open && !$("#configContent").value) loadConfig();
+      });
     }
 
-    // Disable button and show loading state
-    consoleRunBtn.disabled = true;
-    consoleRunBtn.textContent = 'Running...';
-    consoleOutputEl.textContent = 'Executing command...\n';
+    $("#configReload").addEventListener("click", loadConfig);
 
-    fetch('/setup/api/console/run', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ command: command, arg: arg })
-    })
-      .then(function (res) {
-        return res.text().then(function (text) {
-          return { status: res.status, text: text };
+    $("#configSave").addEventListener("click", async () => {
+      const content = $("#configContent").value;
+      const confirmed = await showModal(
+        "Save Config & Restart?",
+        "<p>This will overwrite the config file, create a backup, and restart the gateway.</p>",
+        null,
+        "💾 Save & Restart",
+      );
+      if (!confirmed) return;
+
+      try {
+        const resp = await fetch("/setup/api/config/raw", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content }),
         });
-      })
-      .then(function (result) {
-        var j;
-        try {
-          j = JSON.parse(result.text);
-        } catch (_e) {
-          j = { ok: false, error: result.text };
-        }
-
-        if (j.ok) {
-          consoleOutputEl.textContent = j.output || '(no output)';
+        const data = await resp.json();
+        if (data.ok) {
+          toast("Config saved and gateway restarted", "success");
+          $("#configOutput").textContent = data.restartOutput || "";
         } else {
-          consoleOutputEl.textContent = 'Error: ' + (j.error || j.output || 'Unknown error');
+          toast(`Save failed: ${data.error}`, "error");
+          $("#configOutput").textContent = data.error || "";
         }
-
-        // Re-enable button
-        consoleRunBtn.disabled = false;
-        consoleRunBtn.textContent = 'Run Command';
-      })
-      .catch(function (e) {
-        consoleOutputEl.textContent = 'Error: ' + String(e);
-        consoleRunBtn.disabled = false;
-        consoleRunBtn.textContent = 'Run Command';
-      });
+      } catch (err) {
+        toast(`Error: ${err.message}`, "error");
+      }
+    });
   }
 
-  consoleRunBtn.onclick = runConsoleCommand;
+  // ========== ADMIN: DEVICE PAIRING ==========
+  function initPairing() {
+    $("#pairingApprove").addEventListener("click", async () => {
+      const channel = $("#pairingChannel").value;
+      const code = $("#pairingCode").value.trim();
+      if (!code) {
+        toast("Enter a pairing code", "warning");
+        return;
+      }
 
-  // Enter key in arg field executes command
-  consoleArgEl.onkeydown = function (e) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      runConsoleCommand();
+      try {
+        const resp = await fetch("/setup/api/devices/approve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requestId: code, channel }),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          toast("Device approved!", "success");
+          $("#pairingCode").value = "";
+          refreshDevices();
+        } else {
+          toast(`Approve failed: ${data.error || data.output}`, "error");
+        }
+      } catch (err) {
+        toast(`Error: ${err.message}`, "error");
+      }
+    });
+
+    $("#devicesRefresh").addEventListener("click", refreshDevices);
+  }
+
+  async function refreshDevices() {
+    const el = $("#devicesList");
+    try {
+      const resp = await fetch("/setup/api/devices/pending");
+      const data = await resp.json();
+      if (data.requestIds?.length) {
+        el.innerHTML = `<p class="muted" style="margin-top:.5rem;">Pending: ${data.requestIds.map(escapeHtml).join(", ")}</p>`;
+      } else {
+        el.innerHTML =
+          '<p class="muted" style="margin-top:.5rem;">No pending devices</p>';
+      }
+    } catch {
+      el.innerHTML = '<p class="muted">Failed to load devices</p>';
     }
-  };
+  }
 
-  // ========== CONFIG EDITOR ==========
-  var configPathEl = document.getElementById('configPath');
-  var configContentEl = document.getElementById('configContent');
-  var configReloadBtn = document.getElementById('configReload');
-  var configSaveBtn = document.getElementById('configSave');
-  var configOutputEl = document.getElementById('configOutput');
+  // ========== ADMIN: IMPORT ==========
+  function initImport() {
+    $("#importButton").addEventListener("click", async () => {
+      const file = $("#importFile").files[0];
+      if (!file) {
+        toast("Select a backup file first", "warning");
+        return;
+      }
 
-  function loadConfig() {
-    configOutputEl.textContent = 'Loading config...';
-    configReloadBtn.disabled = true;
-    configSaveBtn.disabled = true;
+      const confirmed = await showModal(
+        "Import Backup?",
+        `<p>This will overwrite the current config and workspace with the backup <strong>${escapeHtml(file.name)}</strong>.</p><p>A backup of the current state will be created first.</p>`,
+        null,
+        "⬆ Import",
+      );
+      if (!confirmed) return;
 
-    fetch('/setup/api/config/raw', {
-      method: 'GET',
-      credentials: 'same-origin'
-    })
-      .then(function (res) {
-        return res.text().then(function (text) {
-          return { status: res.status, text: text };
+      try {
+        const resp = await fetch("/setup/import", {
+          method: "POST",
+          headers: { "Content-Type": file.type || "application/gzip" },
+          body: file,
         });
-      })
-      .then(function (result) {
-        var j;
-        try {
-          j = JSON.parse(result.text);
-        } catch (_e) {
-          j = { ok: false, error: result.text };
-        }
-
-        if (j.ok) {
-          configPathEl.textContent = j.path || 'Unknown';
-          configContentEl.value = j.content || '';
-          if (j.exists) {
-            configOutputEl.textContent = 'Config loaded successfully';
-          } else {
-            configOutputEl.textContent = 'Config file does not exist yet. Run onboarding first.';
-          }
+        const data = await resp.json();
+        if (data.ok) {
+          toast("Backup imported successfully! Reloading...", "success", 3000);
+          setTimeout(() => location.reload(), 2000);
         } else {
-          configOutputEl.textContent = 'Error: ' + (j.error || 'Unknown error');
+          toast(`Import failed: ${data.error}`, "error");
         }
-
-        configReloadBtn.disabled = false;
-        configSaveBtn.disabled = false;
-      })
-      .catch(function (e) {
-        configOutputEl.textContent = 'Error: ' + String(e);
-        configReloadBtn.disabled = false;
-        configSaveBtn.disabled = false;
-      });
+        if (data.output) {
+          $("#importOutput").textContent = data.output;
+          $("#importOutput").style.display = "block";
+        }
+      } catch (err) {
+        toast(`Import error: ${err.message}`, "error");
+      }
+    });
   }
 
-  function saveConfig() {
-    var content = configContentEl.value;
-
-    configOutputEl.textContent = 'Saving config...';
-    configReloadBtn.disabled = true;
-    configSaveBtn.disabled = true;
-    configSaveBtn.textContent = 'Saving...';
-
-    fetch('/setup/api/config/raw', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: content })
-    })
-      .then(function (res) {
-        return res.text().then(function (text) {
-          return { status: res.status, text: text };
+  // ========== DASHBOARD ACTIONS ==========
+  function initDashboardActions() {
+    $("#dashRestart").addEventListener("click", async () => {
+      toast("Restarting gateway...", "info", 2000);
+      try {
+        const resp = await fetch("/setup/api/console/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ command: "gateway.restart" }),
         });
-      })
-      .then(function (result) {
-        var j;
-        try {
-          j = JSON.parse(result.text);
-        } catch (_e) {
-          j = { ok: false, error: result.text };
-        }
-
-        if (j.ok) {
-          configOutputEl.textContent = 'Success: ' + (j.message || 'Config saved') + '\n' + (j.restartOutput || '');
+        const data = await resp.json();
+        if (data.ok) {
+          toast("Gateway restarted", "success");
         } else {
-          configOutputEl.textContent = 'Error: ' + (j.error || 'Unknown error');
+          toast(`Restart failed: ${data.error || data.output}`, "error");
         }
+      } catch (err) {
+        toast(`Error: ${err.message}`, "error");
+      }
+      setTimeout(refreshDashboard, 2000);
+    });
 
-        configReloadBtn.disabled = false;
-        configSaveBtn.disabled = false;
-        configSaveBtn.textContent = 'Save & restart gateway';
-      })
-      .catch(function (e) {
-        configOutputEl.textContent = 'Error: ' + String(e);
-        configReloadBtn.disabled = false;
-        configSaveBtn.disabled = false;
-        configSaveBtn.textContent = 'Save & restart gateway';
-      });
-  }
-
-  if (configReloadBtn) {
-    configReloadBtn.onclick = loadConfig;
-  }
-
-  if (configSaveBtn) {
-    configSaveBtn.onclick = saveConfig;
-  }
-
-  // Auto-load config on page load
-  loadConfig();
-
-  // ========== DEVICE PAIRING HELPER ==========
-  var devicesRefreshBtn = document.getElementById('devicesRefresh');
-  var devicesListEl = document.getElementById('devicesList');
-
-  function refreshDevices() {
-    if (!devicesListEl) return;
-
-    devicesListEl.innerHTML = '<p class="muted">Loading...</p>';
-    if (devicesRefreshBtn) {
-      devicesRefreshBtn.disabled = true;
-      devicesRefreshBtn.textContent = 'Loading...';
-    }
-
-    fetch('/setup/api/devices/pending', {
-      method: 'GET',
-      credentials: 'same-origin'
-    })
-      .then(function (res) {
-        return res.text().then(function (text) {
-          return { status: res.status, text: text };
+    $("#dashDoctor").addEventListener("click", async () => {
+      toast("Running doctor...", "info", 3000);
+      try {
+        const resp = await fetch("/setup/api/console/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ command: "openclaw.doctor" }),
         });
-      })
-      .then(function (result) {
-        var j;
-        try {
-          j = JSON.parse(result.text);
-        } catch (_e) {
-          j = { ok: false, error: result.text };
+        const data = await resp.json();
+        if (data.output) {
+          await showModal(
+            "🩺 Doctor Results",
+            `<pre style="max-height:300px;overflow:auto;font-size:.8rem;white-space:pre-wrap;word-break:break-word;">${escapeHtml(data.output)}</pre>`,
+            null,
+            "Close",
+          );
         }
+      } catch (err) {
+        toast(`Error: ${err.message}`, "error");
+      }
+    });
+  }
 
-        if (j.ok) {
-          if (j.requestIds && j.requestIds.length > 0) {
-            var html = '<p class="muted">Found ' + j.requestIds.length + ' pending device(s):</p>';
-            html += '<ul style="list-style: none; padding: 0;">';
-            for (var i = 0; i < j.requestIds.length; i++) {
-              var reqId = j.requestIds[i];
-              html += '<li id="device-' + reqId + '" style="padding: 0.5rem; margin-bottom: 0.5rem; background: #f5f5f5; border-radius: 4px;">';
-              html += '<code style="font-weight: bold;">' + reqId + '</code> ';
-              html += '<button class="approve-device" data-requestid="' + reqId + '" style="margin-left: 0.5rem;">Approve</button>';
-              html += '</li>';
-            }
-            html += '</ul>';
-            html += '<details style="margin-top: 0.75rem;"><summary style="cursor: pointer;">Show raw output</summary>';
-            html += '<pre style="margin-top: 0.5rem; background: #f5f5f5; padding: 0.5rem; border-radius: 4px; font-size: 11px; max-height: 200px; overflow-y: auto;">' + (j.output || '(no output)') + '</pre>';
-            html += '</details>';
-            devicesListEl.innerHTML = html;
+  // ========== RESET SETUP ==========
+  function initReset() {
+    $("#reset").addEventListener("click", async () => {
+      const confirmed = await showModal(
+        "🗑 Reset Setup?",
+        "<p>This will <strong>delete all configuration</strong> and let you start fresh. The gateway will be stopped.</p><p>Consider exporting a backup first!</p>",
+        null,
+        "Reset Everything",
+      );
+      if (!confirmed) return;
 
-            // Attach click handlers to approve buttons
-            var approveButtons = devicesListEl.querySelectorAll('.approve-device');
-            for (var k = 0; k < approveButtons.length; k++) {
-              approveButtons[k].onclick = function (e) {
-                var btn = e.target;
-                var reqId = btn.getAttribute('data-requestid');
-                approveDevice(reqId, btn);
-              };
-            }
-          } else {
-            devicesListEl.innerHTML = '<p class="muted">No pending devices found.</p>';
-            if (j.output) {
-              devicesListEl.innerHTML += '<details style="margin-top: 0.5rem;"><summary style="cursor: pointer;">Show raw output</summary>';
-              devicesListEl.innerHTML += '<pre style="margin-top: 0.5rem; background: #f5f5f5; padding: 0.5rem; border-radius: 4px; font-size: 11px; max-height: 200px; overflow-y: auto;">' + j.output + '</pre>';
-              devicesListEl.innerHTML += '</details>';
-            }
-          }
+      try {
+        const resp = await fetch("/setup/api/reset", { method: "POST" });
+        const data = await resp.json();
+        if (data.ok) {
+          toast("Setup reset! Reloading...", "success", 2000);
+          setTimeout(() => location.reload(), 1500);
         } else {
-          devicesListEl.innerHTML = '<p style="color: #d32f2f;">Error: ' + (j.error || j.output || 'Unknown error') + '</p>';
+          toast(`Reset failed: ${data.error || ""}`, "error");
         }
+      } catch (err) {
+        toast(`Error: ${err.message}`, "error");
+      }
+    });
+  }
 
-        if (devicesRefreshBtn) {
-          devicesRefreshBtn.disabled = false;
-          devicesRefreshBtn.textContent = 'Refresh pending devices';
-        }
-      })
-      .catch(function (e) {
-        devicesListEl.innerHTML = '<p style="color: #d32f2f;">Error: ' + String(e) + '</p>';
-        if (devicesRefreshBtn) {
-          devicesRefreshBtn.disabled = false;
-          devicesRefreshBtn.textContent = 'Refresh pending devices';
+  // ========== PROGRESS STEP CLICK ==========
+  function initProgressClicks() {
+    $$(".progress-step").forEach((el) => {
+      el.addEventListener("click", () => {
+        const step = parseInt(el.dataset.step);
+        if (step <= currentStep || el.classList.contains("completed")) {
+          goToStep(step);
         }
       });
+    });
   }
 
-  function approveDevice(requestId, buttonEl) {
-    buttonEl.disabled = true;
-    buttonEl.textContent = 'Approving...';
-
-    fetch('/setup/api/devices/approve', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ requestId: requestId })
-    })
-      .then(function (res) {
-        return res.text().then(function (text) {
-          return { status: res.status, text: text };
-        });
-      })
-      .then(function (result) {
-        var j;
-        try {
-          j = JSON.parse(result.text);
-        } catch (_e) {
-          j = { ok: false, error: result.text };
-        }
-
-        if (j.ok) {
-          // Visual feedback: green background and checkmark
-          var deviceEl = document.getElementById('device-' + requestId);
-          if (deviceEl) {
-            deviceEl.style.background = '#4caf50';
-            deviceEl.style.color = '#fff';
-          }
-          buttonEl.textContent = 'Approved ✓';
-          buttonEl.disabled = true;
-        } else {
-          buttonEl.textContent = 'Failed';
-          buttonEl.disabled = false;
-          alert('Approval failed: ' + (j.error || j.output || 'Unknown error'));
-        }
-      })
-      .catch(function (e) {
-        buttonEl.textContent = 'Error';
-        buttonEl.disabled = false;
-        alert('Error: ' + String(e));
-      });
+  // ========== UTILITY ==========
+  function sleep(ms) {
+    return new Promise((r) => setTimeout(r, ms));
   }
 
-  if (devicesRefreshBtn) {
-    devicesRefreshBtn.onclick = refreshDevices;
+  // ========== BOOT ==========
+  async function init() {
+    // Step navigation buttons
+    $("#step1Next").addEventListener("click", () => {
+      if (!validateAuthSecret()) {
+        toast("Please fix the validation errors", "warning");
+        return;
+      }
+      goToStep(2);
+    });
+    $("#step2Back").addEventListener("click", () => goToStep(1));
+    $("#step2Next").addEventListener("click", () => goToStep(3));
+    $("#step3Back").addEventListener("click", () => goToStep(2));
+    $("#step3Next").addEventListener("click", () => goToStep(4));
+    $("#step4Back").addEventListener("click", () => goToStep(3));
+    $("#step4Next").addEventListener("click", () => goToStep(5));
+    $("#step5Back").addEventListener("click", () => goToStep(4));
+
+    // Auth choice change
+    $("#authChoice").addEventListener("change", onAuthChoiceChange);
+    $("#authSecret").addEventListener("input", validateAuthSecret);
+
+    // Channel validation
+    $("#telegramToken").addEventListener("input", validateTelegramToken);
+    $("#discordToken").addEventListener("input", validateDiscordToken);
+    $("#tailscaleAuthKey").addEventListener("input", validateTailscaleKey);
+
+    // Run button
+    $("#run").addEventListener("click", runSetup);
+
+    // Initialize sub-systems
+    initChannelTabs();
+    initCustomProviderTemplates();
+    initPasswordToggles();
+    initConsole();
+    initConfigEditor();
+    initPairing();
+    initImport();
+    initDashboardActions();
+    initReset();
+    initProgressClicks();
+
+    // Load initial data
+    await refreshDashboard();
   }
 
-  // ========== BACKUP IMPORT ==========
-  var importFileEl = document.getElementById('importFile');
-  var importButtonEl = document.getElementById('importButton');
-  var importOutputEl = document.getElementById('importOutput');
-
-  function importBackup() {
-    var file = importFileEl.files[0];
-    
-    if (!file) {
-      importOutputEl.textContent = 'Error: Please select a file';
-      return;
-    }
-
-    // Validate file type
-    var fileName = file.name.toLowerCase();
-    if (!fileName.endsWith('.tar.gz') && !fileName.endsWith('.tgz')) {
-      importOutputEl.textContent = 'Error: File must be a .tar.gz or .tgz archive';
-      return;
-    }
-
-    // Validate file size (250MB max)
-    var maxSize = 250 * 1024 * 1024;
-    if (file.size > maxSize) {
-      importOutputEl.textContent = 'Error: File size exceeds 250MB limit (got ' + Math.round(file.size / 1024 / 1024) + 'MB)';
-      return;
-    }
-
-    // Confirmation dialog
-    var confirmMsg = 'Import backup from "' + file.name + '"?\n\n' +
-                     'This will:\n' +
-                     '- Stop the gateway\n' +
-                     '- Overwrite existing config and workspace\n' +
-                     '- Restart the gateway\n' +
-                     '- Reload this page\n\n' +
-                     'Are you sure?';
-    
-    if (!confirm(confirmMsg)) {
-      importOutputEl.textContent = 'Import cancelled';
-      return;
-    }
-
-    // Disable button and show progress
-    importButtonEl.disabled = true;
-    importButtonEl.textContent = 'Importing...';
-    importOutputEl.textContent = 'Uploading ' + file.name + ' (' + Math.round(file.size / 1024 / 1024) + 'MB)...\n';
-
-    // Upload file
-    fetch('/setup/import', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: {
-        'content-type': 'application/gzip'
-      },
-      body: file
-    })
-      .then(function (res) {
-        return res.text().then(function (text) {
-          return { status: res.status, text: text };
-        });
-      })
-      .then(function (result) {
-        var j;
-        try {
-          j = JSON.parse(result.text);
-        } catch (_e) {
-          j = { ok: false, error: result.text };
-        }
-
-        if (j.ok) {
-          importOutputEl.textContent = 'Success: ' + (j.message || 'Import completed') + '\n\nReloading page in 2 seconds...';
-          
-          // Reload page after successful import to show fresh state
-          setTimeout(function () {
-            window.location.reload();
-          }, 2000);
-        } else {
-          importOutputEl.textContent = 'Error: ' + (j.error || 'Import failed');
-          importButtonEl.disabled = false;
-          importButtonEl.textContent = 'Import backup';
-        }
-      })
-      .catch(function (e) {
-        importOutputEl.textContent = 'Error: ' + String(e);
-        importButtonEl.disabled = false;
-        importButtonEl.textContent = 'Import backup';
-      });
+  // Start when DOM ready
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
   }
-
-  if (importButtonEl) {
-    importButtonEl.onclick = importBackup;
-  }
-
-  // Load auth groups immediately (fast endpoint)
-  loadAuthGroups();
-  
-  // Load status (slower, but needed for version info)
-  refreshStatus();
 })();

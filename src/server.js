@@ -26,7 +26,9 @@ const ENV_MIGRATIONS = [
 
 for (const { old, new: newVar } of ENV_MIGRATIONS) {
   if (process.env[old] && !process.env[newVar]) {
-    console.warn(`[env-migration] Detected legacy ${old}, auto-migrating to ${newVar}`);
+    console.warn(
+      `[env-migration] Detected legacy ${old}, auto-migrating to ${newVar}`,
+    );
     process.env[newVar] = process.env[old];
   }
 }
@@ -58,12 +60,18 @@ function debug(...args) {
 function resolveGatewayToken() {
   console.log(`[token] ========== SERVER STARTUP TOKEN RESOLUTION ==========`);
   const envTok = process.env.OPENCLAW_GATEWAY_TOKEN?.trim();
-  console.log(`[token] ENV OPENCLAW_GATEWAY_TOKEN exists: ${!!process.env.OPENCLAW_GATEWAY_TOKEN}`);
-  console.log(`[token] ENV value length: ${process.env.OPENCLAW_GATEWAY_TOKEN?.length || 0}`);
+  console.log(
+    `[token] ENV OPENCLAW_GATEWAY_TOKEN exists: ${!!process.env.OPENCLAW_GATEWAY_TOKEN}`,
+  );
+  console.log(
+    `[token] ENV value length: ${process.env.OPENCLAW_GATEWAY_TOKEN?.length || 0}`,
+  );
   console.log(`[token] After trim length: ${envTok?.length || 0}`);
 
   if (envTok) {
-    console.log(`[token] ✓ Using token from OPENCLAW_GATEWAY_TOKEN env variable`);
+    console.log(
+      `[token] ✓ Using token from OPENCLAW_GATEWAY_TOKEN env variable`,
+    );
     debug(`[token]   First 16 chars: ${envTok.slice(0, 16)}...`);
     debug(`[token]   Full token: ${envTok}`);
     return envTok;
@@ -99,16 +107,18 @@ function resolveGatewayToken() {
 
 const OPENCLAW_GATEWAY_TOKEN = resolveGatewayToken();
 process.env.OPENCLAW_GATEWAY_TOKEN = OPENCLAW_GATEWAY_TOKEN;
-debug(`[token] Final resolved token: ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}... (len: ${OPENCLAW_GATEWAY_TOKEN.length})`);
+debug(
+  `[token] Final resolved token: ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}... (len: ${OPENCLAW_GATEWAY_TOKEN.length})`,
+);
 console.log(`[token] ========== TOKEN RESOLUTION COMPLETE ==========\n`);
 
 // ========== STARTUP STATE TRACKING ==========
 // Track wrapper startup phases to provide better UX during cold starts
 const StartupState = {
   UNCONFIGURED: "UNCONFIGURED", // No openclaw.json exists yet
-  STARTING: "STARTING",         // Gateway is booting up
-  READY: "READY",               // Gateway is ready and healthy
-  ERROR: "ERROR",               // Gateway failed to start or crashed
+  STARTING: "STARTING", // Gateway is booting up
+  READY: "READY", // Gateway is ready and healthy
+  ERROR: "ERROR", // Gateway failed to start or crashed
 };
 
 let currentStartupState = StartupState.UNCONFIGURED;
@@ -247,20 +257,20 @@ const AUTH_GROUPS = [
 // Supports explicit override + legacy config file migration.
 function resolveConfigCandidates() {
   const candidates = [];
-  
+
   // 1. Explicit override (highest priority)
   const explicit = process.env.OPENCLAW_CONFIG_PATH?.trim();
   if (explicit) {
     candidates.push(explicit);
   }
-  
+
   // 2. Current openclaw.json
   candidates.push(path.join(STATE_DIR, "openclaw.json"));
-  
+
   // 3. Legacy config files (for auto-migration)
   candidates.push(path.join(STATE_DIR, "moltbot.json"));
   candidates.push(path.join(STATE_DIR, "clawdbot.json"));
-  
+
   return candidates;
 }
 
@@ -291,7 +301,7 @@ function isConfigured() {
 // This runs once at startup before any gateway operations.
 (function migrateLegacyConfigFiles() {
   const target = configPath();
-  
+
   // If target already exists, nothing to migrate
   try {
     if (fs.existsSync(target)) {
@@ -300,30 +310,34 @@ function isConfigured() {
   } catch {
     return;
   }
-  
+
   // Check for legacy files and migrate the first one found
   const legacyFiles = [
     path.join(STATE_DIR, "moltbot.json"),
     path.join(STATE_DIR, "clawdbot.json"),
   ];
-  
+
   for (const legacyPath of legacyFiles) {
     try {
       if (fs.existsSync(legacyPath)) {
-        console.warn(`[config-migration] Found legacy config file: ${legacyPath}`);
+        console.warn(
+          `[config-migration] Found legacy config file: ${legacyPath}`,
+        );
         console.warn(`[config-migration] Renaming to: ${target}`);
-        
+
         // Ensure target directory exists
         fs.mkdirSync(path.dirname(target), { recursive: true });
-        
+
         // Rename (atomic on same filesystem)
         fs.renameSync(legacyPath, target);
-        
+
         console.warn(`[config-migration] ✓ Migration complete`);
         return;
       }
     } catch (err) {
-      console.error(`[config-migration] Failed to migrate ${legacyPath}: ${err.message}`);
+      console.error(
+        `[config-migration] Failed to migrate ${legacyPath}: ${err.message}`,
+      );
       // Continue checking other legacy files
     }
   }
@@ -331,7 +345,7 @@ function isConfigured() {
 
 let gatewayProc = null;
 let gatewayStarting = null;
-let gatewayHealthy = false;  // Track if gateway responded to health check
+let gatewayHealthy = false; // Track if gateway responded to health check
 
 // Debug breadcrumbs for common Railway failures (502 / "Application failed to respond").
 let lastGatewayError = null;
@@ -344,20 +358,25 @@ function sleep(ms) {
 }
 
 async function waitForGatewayReady(opts = {}) {
-  const timeoutMs = opts.timeoutMs ?? 120_000;  // Increased from 60s to 120s for Railway cold starts
+  const timeoutMs = opts.timeoutMs ?? 120_000; // Increased from 60s to 120s for Railway cold starts
   const start = Date.now();
   const endpoints = ["/openclaw", "/openclaw", "/", "/health"];
-  
+
   while (Date.now() - start < timeoutMs) {
     for (const endpoint of endpoints) {
       try {
-        const res = await fetch(`${GATEWAY_TARGET}${endpoint}`, { method: "GET" });
+        const res = await fetch(`${GATEWAY_TARGET}${endpoint}`, {
+          method: "GET",
+        });
         // Any HTTP response means the port is open.
         if (res) {
           const elapsed = ((Date.now() - start) / 1000).toFixed(1);
           console.log(`[gateway] ready at ${endpoint} (${elapsed}s elapsed)`);
           gatewayHealthy = true;
-          setStartupState(StartupState.READY, `Gateway ready after ${elapsed}s`);
+          setStartupState(
+            StartupState.READY,
+            `Gateway ready after ${elapsed}s`,
+          );
           return true;
         }
       } catch (err) {
@@ -367,7 +386,9 @@ async function waitForGatewayReady(opts = {}) {
     await sleep(250);
   }
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-  console.warn(`[gateway] initial readiness check timed out after ${elapsed}s, but gateway may still be starting...`);
+  console.warn(
+    `[gateway] initial readiness check timed out after ${elapsed}s, but gateway may still be starting...`,
+  );
   console.warn(`[gateway] continuing health monitoring in background`);
   // Don't set ERROR state - background monitor may still succeed
   return false;
@@ -386,7 +407,9 @@ async function startGateway() {
   // Sync wrapper token to openclaw.json before every gateway start.
   // This ensures the gateway's config-file token matches what the wrapper injects via proxy.
   console.log(`[gateway] ========== GATEWAY START TOKEN SYNC ==========`);
-  console.log(`[gateway] Syncing wrapper token to config (length: ${OPENCLAW_GATEWAY_TOKEN.length})`);
+  console.log(
+    `[gateway] Syncing wrapper token to config (length: ${OPENCLAW_GATEWAY_TOKEN.length})`,
+  );
   debug(`[gateway] Token preview: ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}...`);
 
   const syncResult = await runCmd(
@@ -400,7 +423,9 @@ async function startGateway() {
   }
 
   if (syncResult.code !== 0) {
-    console.error(`[gateway] ⚠️  WARNING: Token sync failed with code ${syncResult.code}`);
+    console.error(
+      `[gateway] ⚠️  WARNING: Token sync failed with code ${syncResult.code}`,
+    );
     throw new Error(`Token sync failed: ${syncResult.output}`);
   }
 
@@ -410,16 +435,22 @@ async function startGateway() {
     const configToken = config?.gateway?.auth?.token;
 
     console.log(`[gateway] Token verification:`);
-    debug(`[gateway]   Wrapper: ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}... (len: ${OPENCLAW_GATEWAY_TOKEN.length})`);
-    debug(`[gateway]   Config:  ${configToken?.slice(0, 16)}... (len: ${configToken?.length || 0})`);
-    console.log(`[gateway]   Token lengths - Wrapper: ${OPENCLAW_GATEWAY_TOKEN.length}, Config: ${configToken?.length || 0}`);
+    debug(
+      `[gateway]   Wrapper: ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}... (len: ${OPENCLAW_GATEWAY_TOKEN.length})`,
+    );
+    debug(
+      `[gateway]   Config:  ${configToken?.slice(0, 16)}... (len: ${configToken?.length || 0})`,
+    );
+    console.log(
+      `[gateway]   Token lengths - Wrapper: ${OPENCLAW_GATEWAY_TOKEN.length}, Config: ${configToken?.length || 0}`,
+    );
 
     if (configToken !== OPENCLAW_GATEWAY_TOKEN) {
       console.error(`[gateway] ✗ Token mismatch detected!`);
       debug(`[gateway]   Full wrapper: ${OPENCLAW_GATEWAY_TOKEN}`);
-      debug(`[gateway]   Full config:  ${configToken || 'null'}`);
+      debug(`[gateway]   Full config:  ${configToken || "null"}`);
       throw new Error(
-        `Token mismatch: tokens don't match (enable DEBUG logging for details)`
+        `Token mismatch: tokens don't match (enable DEBUG logging for details)`,
       );
     }
     console.log(`[gateway] ✓ Token verification PASSED`);
@@ -452,7 +483,9 @@ async function startGateway() {
     },
   });
 
-  console.log(`[gateway] starting with command: ${OPENCLAW_NODE} ${clawArgs(args).join(" ")}`);
+  console.log(
+    `[gateway] starting with command: ${OPENCLAW_NODE} ${clawArgs(args).join(" ")}`,
+  );
   console.log(`[gateway] STATE_DIR: ${STATE_DIR}`);
   console.log(`[gateway] WORKSPACE_DIR: ${WORKSPACE_DIR}`);
   console.log(`[gateway] config path: ${configPath()}`);
@@ -469,11 +502,14 @@ async function startGateway() {
     const msg = `[gateway] exited code=${code} signal=${signal}`;
     console.error(msg);
     lastGatewayExit = { code, signal, at: new Date().toISOString() };
-    setStartupState(StartupState.ERROR, `Gateway exited: code=${code} signal=${signal}`);
+    setStartupState(
+      StartupState.ERROR,
+      `Gateway exited: code=${code} signal=${signal}`,
+    );
     gatewayProc = null;
     gatewayHealthy = false;
   });
-  
+
   // Start background health monitoring
   startBackgroundHealthMonitor();
 }
@@ -485,21 +521,28 @@ function startBackgroundHealthMonitor() {
   if (healthMonitorInterval) {
     clearInterval(healthMonitorInterval);
   }
-  
+
   // Check gateway health every 10 seconds
   healthMonitorInterval = setInterval(async () => {
     // Only monitor if gateway process exists but hasn't responded yet
     if (gatewayProc && !gatewayHealthy) {
       try {
-        const res = await fetch(`${GATEWAY_TARGET}/health`, { 
+        const res = await fetch(`${GATEWAY_TARGET}/health`, {
           method: "GET",
-          signal: AbortSignal.timeout(5000)
+          signal: AbortSignal.timeout(5000),
         });
         if (res) {
-          const elapsed = gatewayStartTime ? Math.floor((Date.now() - gatewayStartTime) / 1000) : 0;
-          console.log(`[gateway] background health check: gateway is NOW HEALTHY (${elapsed}s elapsed)`);
+          const elapsed = gatewayStartTime
+            ? Math.floor((Date.now() - gatewayStartTime) / 1000)
+            : 0;
+          console.log(
+            `[gateway] background health check: gateway is NOW HEALTHY (${elapsed}s elapsed)`,
+          );
           gatewayHealthy = true;
-          setStartupState(StartupState.READY, `Gateway ready after ${elapsed}s (background check)`);
+          setStartupState(
+            StartupState.READY,
+            `Gateway ready after ${elapsed}s (background check)`,
+          );
           clearInterval(healthMonitorInterval);
           healthMonitorInterval = null;
         }
@@ -524,7 +567,8 @@ async function runDoctorBestEffort() {
   try {
     const r = await runCmd(OPENCLAW_NODE, clawArgs(["doctor"]));
     const out = redactSecrets(r.output || "");
-    lastDoctorOutput = out.length > 50_000 ? out.slice(0, 50_000) + "\n... (truncated)\n" : out;
+    lastDoctorOutput =
+      out.length > 50_000 ? out.slice(0, 50_000) + "\n... (truncated)\n" : out;
   } catch (err) {
     lastDoctorOutput = `doctor failed: ${String(err)}`;
   }
@@ -544,7 +588,9 @@ async function ensureGatewayRunning() {
         await startGateway();
         const ready = await waitForGatewayReady({ timeoutMs: 120_000 });
         if (!ready) {
-          console.warn(`[gateway] Initial readiness check timed out, but background monitor will continue checking`);
+          console.warn(
+            `[gateway] Initial readiness check timed out, but background monitor will continue checking`,
+          );
           // Don't throw error - background monitor will detect when ready
         }
       } catch (err) {
@@ -568,7 +614,9 @@ async function restartGateway() {
 
   // Kill gateway process tracked by wrapper
   if (gatewayProc) {
-    console.log(`[gateway] Killing wrapper-managed gateway process (PID: ${gatewayProc.pid})`);
+    console.log(
+      `[gateway] Killing wrapper-managed gateway process (PID: ${gatewayProc.pid})`,
+    );
     try {
       gatewayProc.kill("SIGTERM");
     } catch (err) {
@@ -580,17 +628,19 @@ async function restartGateway() {
   // Also kill any other gateway processes (e.g., started by onboard command)
   // Use pkill to ensure ALL gateway processes are stopped before restart
   console.log(`[gateway] Ensuring all gateway processes stopped with pkill...`);
-  
+
   // Try multiple patterns to catch all gateway variants
   const killPatterns = [
-    "gateway run",           // Main gateway command
-    "openclaw.*gateway",     // Any openclaw gateway process
+    "gateway run", // Main gateway command
+    "openclaw.*gateway", // Any openclaw gateway process
     `port.*${INTERNAL_GATEWAY_PORT}`, // Processes using our port
   ];
-  
+
   for (const pattern of killPatterns) {
     try {
-      const killResult = await runCmd("pkill", ["-f", pattern], { timeoutMs: 5000 });
+      const killResult = await runCmd("pkill", ["-f", pattern], {
+        timeoutMs: 5000,
+      });
       if (killResult.code === 0) {
         console.log(`[gateway] pkill -f "${pattern}" succeeded`);
       }
@@ -608,7 +658,9 @@ async function restartGateway() {
   try {
     const stillListening = await probeGateway();
     if (stillListening) {
-      console.warn(`[gateway] ⚠️  Port ${INTERNAL_GATEWAY_PORT} still in use after pkill!`);
+      console.warn(
+        `[gateway] ⚠️  Port ${INTERNAL_GATEWAY_PORT} still in use after pkill!`,
+      );
       // Wait a bit longer
       await sleep(3000);
     }
@@ -658,7 +710,9 @@ async function probeGateway() {
     });
 
     const done = (ok) => {
-      try { sock.destroy(); } catch {}
+      try {
+        sock.destroy();
+      } catch {}
       resolve(ok);
     };
 
@@ -737,7 +791,9 @@ app.get("/setup/api/status", requireSetupAuth, async (_req, res) => {
   // Resilient version check with timeout and fallback
   let openclawVersion = "unknown";
   try {
-    const version = await runCmd(OPENCLAW_NODE, clawArgs(["--version"]), { timeoutMs: 5000 });
+    const version = await runCmd(OPENCLAW_NODE, clawArgs(["--version"]), {
+      timeoutMs: 5000,
+    });
     if (version.code === 0 && version.output?.trim()) {
       openclawVersion = version.output.trim();
     }
@@ -751,7 +807,7 @@ app.get("/setup/api/status", requireSetupAuth, async (_req, res) => {
     const channelsHelpResult = await runCmd(
       OPENCLAW_NODE,
       clawArgs(["channels", "add", "--help"]),
-      { timeoutMs: 5000 }
+      { timeoutMs: 5000 },
     );
     if (channelsHelpResult.code === 0) {
       channelsAddHelp = channelsHelpResult.output;
@@ -803,7 +859,7 @@ function buildOnboardArgs(payload) {
 
     // Map secret to correct flag for common choices.
     const secret = (payload.authSecret || "").trim();
-    
+
     // Auth choices that require a secret (API keys, tokens, etc.)
     const requiresSecret = [
       "openai-api-key",
@@ -820,19 +876,19 @@ function buildOnboardArgs(payload) {
       "synthetic-api-key",
       "opencode-zen",
     ];
-    
+
     // Validate: if user selected an auth choice that requires a secret, fail fast
     if (requiresSecret.includes(payload.authChoice) && !secret) {
       throw new Error(
         `Missing auth secret for authChoice=${payload.authChoice}.\n` +
-        `Please provide your API key or token in the "Key / Token" field above.\n\n` +
-        `Troubleshooting:\n` +
-        `- Ensure you've pasted the API key correctly (no extra spaces)\n` +
-        `- Check the provider's documentation for how to obtain the key\n` +
-        `- Verify the key is valid and not expired`
+          `Please provide your API key or token in the "Key / Token" field above.\n\n` +
+          `Troubleshooting:\n` +
+          `- Ensure you've pasted the API key correctly (no extra spaces)\n` +
+          `- Check the provider's documentation for how to obtain the key\n` +
+          `- Verify the key is valid and not expired`,
       );
     }
-    
+
     const map = {
       "openai-api-key": "--openai-api-key",
       apiKey: "--anthropic-api-key",
@@ -853,7 +909,10 @@ function buildOnboardArgs(payload) {
     }
 
     if (authChoice === "token") {
-      if (!secret) throw new Error("Missing setup-token for Claude Max auth. Run 'claude setup-token' in your terminal and paste the result.");
+      if (!secret)
+        throw new Error(
+          "Missing setup-token for Claude Max auth. Run 'claude setup-token' in your terminal and paste the result.",
+        );
       args.push("--token-provider", "anthropic", "--token", secret);
     }
   }
@@ -865,7 +924,7 @@ function buildOnboardArgs(payload) {
 // Escalates from SIGTERM → SIGKILL to prevent hanging commands.
 function runCmd(cmd, args, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? 120_000; // 2 minutes default
-  
+
   return new Promise((resolve) => {
     const proc = childProcess.spawn(cmd, args, {
       ...opts,
@@ -879,7 +938,7 @@ function runCmd(cmd, args, opts = {}) {
     let out = "";
     let timedOut = false;
     let killTimer = null;
-    
+
     proc.stdout?.on("data", (d) => (out += d.toString("utf8")));
     proc.stderr?.on("data", (d) => (out += d.toString("utf8")));
 
@@ -887,13 +946,13 @@ function runCmd(cmd, args, opts = {}) {
     const timeoutTimer = setTimeout(() => {
       timedOut = true;
       out += `\n[timeout] Command exceeded ${timeoutMs}ms, sending SIGTERM...\n`;
-      
+
       try {
         proc.kill("SIGTERM");
       } catch (err) {
         out += `[timeout] SIGTERM failed: ${err.message}\n`;
       }
-      
+
       // Escalate to SIGKILL after 5 seconds
       killTimer = setTimeout(() => {
         out += `[timeout] Process still alive after SIGTERM, sending SIGKILL...\n`;
@@ -915,7 +974,7 @@ function runCmd(cmd, args, opts = {}) {
     proc.on("close", (code) => {
       clearTimeout(timeoutTimer);
       if (killTimer) clearTimeout(killTimer);
-      
+
       if (timedOut && code === null) {
         // Process was killed by our timeout handler
         resolve({ code: 124, output: out }); // 124 = timeout exit code (like GNU timeout)
@@ -945,9 +1004,20 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
 
     // DIAGNOSTIC: Log token we're passing to onboard (DEBUG only)
     debug(`[onboard] ========== TOKEN DIAGNOSTIC START ==========`);
-    debug(`[onboard] Wrapper token (from env/file/generated): ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}... (length: ${OPENCLAW_GATEWAY_TOKEN.length})`);
-    debug(`[onboard] Onboard command args include: --gateway-token ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}...`);
-    debug(`[onboard] Full onboard command: node ${clawArgs(onboardArgs).join(' ').replace(OPENCLAW_GATEWAY_TOKEN, OPENCLAW_GATEWAY_TOKEN.slice(0, 16) + '...')}`);
+    debug(
+      `[onboard] Wrapper token (from env/file/generated): ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}... (length: ${OPENCLAW_GATEWAY_TOKEN.length})`,
+    );
+    debug(
+      `[onboard] Onboard command args include: --gateway-token ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}...`,
+    );
+    debug(
+      `[onboard] Full onboard command: node ${clawArgs(onboardArgs)
+        .join(" ")
+        .replace(
+          OPENCLAW_GATEWAY_TOKEN,
+          OPENCLAW_GATEWAY_TOKEN.slice(0, 16) + "...",
+        )}`,
+    );
 
     const onboard = await runCmd(OPENCLAW_NODE, clawArgs(onboardArgs));
 
@@ -958,13 +1028,21 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
     // DIAGNOSTIC: Check what token onboard actually wrote to config (DEBUG only)
     if (ok) {
       try {
-        const configAfterOnboard = JSON.parse(fs.readFileSync(configPath(), "utf8"));
+        const configAfterOnboard = JSON.parse(
+          fs.readFileSync(configPath(), "utf8"),
+        );
         const tokenAfterOnboard = configAfterOnboard?.gateway?.auth?.token;
-        debug(`[onboard] Token in config AFTER onboard: ${tokenAfterOnboard?.slice(0, 16)}... (length: ${tokenAfterOnboard?.length || 0})`);
+        debug(
+          `[onboard] Token in config AFTER onboard: ${tokenAfterOnboard?.slice(0, 16)}... (length: ${tokenAfterOnboard?.length || 0})`,
+        );
         const tokensMatch = tokenAfterOnboard === OPENCLAW_GATEWAY_TOKEN;
-        console.log(`[onboard] Token match: ${tokensMatch ? '✓ MATCHES' : '✗ MISMATCH!'}`);
+        console.log(
+          `[onboard] Token match: ${tokensMatch ? "✓ MATCHES" : "✗ MISMATCH!"}`,
+        );
         if (!tokensMatch) {
-          console.log(`[onboard] ⚠️  PROBLEM: onboard command ignored --gateway-token flag and wrote its own token!`);
+          console.log(
+            `[onboard] ⚠️  PROBLEM: onboard command ignored --gateway-token flag and wrote its own token!`,
+          );
           extra += `\n[WARNING] onboard wrote different token than expected\n`;
           if (DEBUG) {
             extra += `  Expected: ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}...\n`;
@@ -981,9 +1059,14 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
       // Ensure gateway token is written into config so the browser UI can authenticate reliably.
       // (We also enforce loopback bind since the wrapper proxies externally.)
       console.log(`[onboard] Now syncing wrapper token to config`);
-      debug(`[onboard] Token preview: ${OPENCLAW_GATEWAY_TOKEN.slice(0, 8)}...`);
+      debug(
+        `[onboard] Token preview: ${OPENCLAW_GATEWAY_TOKEN.slice(0, 8)}...`,
+      );
 
-      await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.mode", "local"]));
+      await runCmd(
+        OPENCLAW_NODE,
+        clawArgs(["config", "set", "gateway.mode", "local"]),
+      );
       await runCmd(
         OPENCLAW_NODE,
         clawArgs(["config", "set", "gateway.auth.mode", "token"]),
@@ -999,13 +1082,17 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         ]),
       );
 
-      console.log(`[onboard] config set gateway.auth.token result: exit code ${setTokenResult.code}`);
+      console.log(
+        `[onboard] config set gateway.auth.token result: exit code ${setTokenResult.code}`,
+      );
       if (setTokenResult.output?.trim()) {
         console.log(`[onboard] config set output: ${setTokenResult.output}`);
       }
 
       if (setTokenResult.code !== 0) {
-        console.error(`[onboard] ⚠️  WARNING: config set gateway.auth.token failed with code ${setTokenResult.code}`);
+        console.error(
+          `[onboard] ⚠️  WARNING: config set gateway.auth.token failed with code ${setTokenResult.code}`,
+        );
         extra += `\n[WARNING] Failed to set gateway token in config: ${setTokenResult.output}\n`;
       }
 
@@ -1016,14 +1103,20 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         const configToken = config?.gateway?.auth?.token;
 
         console.log(`[onboard] Token verification after sync:`);
-        debug(`[onboard]   Wrapper token: ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}... (len: ${OPENCLAW_GATEWAY_TOKEN.length})`);
-        debug(`[onboard]   Config token:  ${configToken?.slice(0, 16)}... (len: ${configToken?.length || 0})`);
-        console.log(`[onboard]   Token lengths - Wrapper: ${OPENCLAW_GATEWAY_TOKEN.length}, Config: ${configToken?.length || 0}`);
+        debug(
+          `[onboard]   Wrapper token: ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}... (len: ${OPENCLAW_GATEWAY_TOKEN.length})`,
+        );
+        debug(
+          `[onboard]   Config token:  ${configToken?.slice(0, 16)}... (len: ${configToken?.length || 0})`,
+        );
+        console.log(
+          `[onboard]   Token lengths - Wrapper: ${OPENCLAW_GATEWAY_TOKEN.length}, Config: ${configToken?.length || 0}`,
+        );
 
         if (configToken !== OPENCLAW_GATEWAY_TOKEN) {
           console.error(`[onboard] ✗ ERROR: Token mismatch after config set!`);
           debug(`[onboard]   Full wrapper token: ${OPENCLAW_GATEWAY_TOKEN}`);
-          debug(`[onboard]   Full config token:  ${configToken || 'null'}`);
+          debug(`[onboard]   Full config token:  ${configToken || "null"}`);
           extra += `\n[ERROR] Token verification failed! Config has different token than wrapper.\n`;
           if (DEBUG) {
             extra += `  Wrapper: ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}...\n`;
@@ -1034,7 +1127,9 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
           extra += `\n[onboard] ✓ Gateway token synced successfully\n`;
         }
       } catch (err) {
-        console.error(`[onboard] ERROR: Could not verify token in config: ${err}`);
+        console.error(
+          `[onboard] ERROR: Could not verify token in config: ${err}`,
+        );
         extra += `\n[ERROR] Could not verify token: ${String(err)}\n`;
       }
 
@@ -1056,7 +1151,12 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
       // Allow Control UI access without device pairing (fixes error 1008: pairing required)
       await runCmd(
         OPENCLAW_NODE,
-        clawArgs(["config", "set", "gateway.controlUi.allowInsecureAuth", "true"]),
+        clawArgs([
+          "config",
+          "set",
+          "gateway.controlUi.allowInsecureAuth",
+          "true",
+        ]),
       );
 
       // Configure trusted proxies for gateway (based on PR #12 by ArtificialSight)
@@ -1068,14 +1168,17 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
           !!process.env.RAILWAY_ENVIRONMENT ||
           !!process.env.RAILWAY_STATIC_URL;
         const trustAllProxies = process.env.OPENCLAW_TRUST_PROXY_ALL === "true";
-        
+
         // Security: Even on Railway, only trust localhost since wrapper proxies all traffic through 127.0.0.1
         // This is more secure than PR #12's original 0.0.0.0/0 while maintaining functionality
-        const trustedProxies = (isRailwayEnv || trustAllProxies)
-          ? ["127.0.0.1"]  // Enhanced from PR #12: was ["0.0.0.0/0"], now localhost only
-          : ["127.0.0.1/32"];
+        const trustedProxies =
+          isRailwayEnv || trustAllProxies
+            ? ["127.0.0.1"] // Enhanced from PR #12: was ["0.0.0.0/0"], now localhost only
+            : ["127.0.0.1/32"];
 
-        console.log(`[setup] Configuring trusted proxies: ${JSON.stringify(trustedProxies)} (Railway: ${isRailwayEnv})`);
+        console.log(
+          `[setup] Configuring trusted proxies: ${JSON.stringify(trustedProxies)} (Railway: ${isRailwayEnv})`,
+        );
 
         await runCmd(
           OPENCLAW_NODE,
@@ -1101,36 +1204,40 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         // Validation: Provider ID (alphanumeric + underscore + dash)
         if (!/^[A-Za-z0-9_-]+$/.test(providerId)) {
           throw new Error(
-            `Invalid custom provider ID "${providerId}". Must contain only alphanumeric characters, underscores, and dashes.`
+            `Invalid custom provider ID "${providerId}". Must contain only alphanumeric characters, underscores, and dashes.`,
           );
         }
 
         // Validation: Base URL (must start with http:// or https://)
         if (!baseUrl || !/^https?:\/\/.+/.test(baseUrl)) {
           throw new Error(
-            `Invalid custom provider base URL "${baseUrl || '(empty)'}". Must start with http:// or https://.`
+            `Invalid custom provider base URL "${baseUrl || "(empty)"}". Must start with http:// or https://.`,
           );
         }
 
         // Validation: API type (must be openai-completions or openai-responses)
         if (api !== "openai-completions" && api !== "openai-responses") {
           throw new Error(
-            `Invalid custom provider API type "${api || '(empty)'}". Must be "openai-completions" or "openai-responses".`
+            `Invalid custom provider API type "${api || "(empty)"}". Must be "openai-completions" or "openai-responses".`,
           );
         }
 
         // Validation: API key env var (optional, but must match pattern if provided)
         if (apiKeyEnv && !/^[A-Z_][A-Z0-9_]*$/.test(apiKeyEnv)) {
           throw new Error(
-            `Invalid API key environment variable name "${apiKeyEnv}". Must be uppercase with underscores (e.g., MY_API_KEY).`
+            `Invalid API key environment variable name "${apiKeyEnv}". Must be uppercase with underscores (e.g., MY_API_KEY).`,
           );
         }
 
-        console.log(`[custom-provider] Configuring custom provider: ${providerId}`);
+        console.log(
+          `[custom-provider] Configuring custom provider: ${providerId}`,
+        );
         console.log(`[custom-provider]   Base URL: ${baseUrl}`);
         console.log(`[custom-provider]   API: ${api}`);
-        console.log(`[custom-provider]   API Key Env: ${apiKeyEnv || '(none)'}`);
-        console.log(`[custom-provider]   Model ID: ${modelId || '(none)'}`);
+        console.log(
+          `[custom-provider]   API Key Env: ${apiKeyEnv || "(none)"}`,
+        );
+        console.log(`[custom-provider]   Model ID: ${modelId || "(none)"}`);
 
         // Build provider config object
         const providerConfig = {
@@ -1167,7 +1274,9 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         extra += `\n[custom-provider] exit=${setProviderResult.code}\n${setProviderResult.output || "(no output)"}`;
 
         if (setProviderResult.code !== 0) {
-          throw new Error(`Failed to configure custom provider: ${setProviderResult.output}`);
+          throw new Error(
+            `Failed to configure custom provider: ${setProviderResult.output}`,
+          );
         }
 
         // Set models.mode to "merge" to prevent overwriting other providers
@@ -1179,10 +1288,14 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         extra += `\n[custom-provider] Set models.mode=merge: exit=${setModeResult.code}\n${setModeResult.output || "(no output)"}`;
 
         if (setModeResult.code !== 0) {
-          console.warn(`[custom-provider] Failed to set models.mode=merge: ${setModeResult.output}`);
+          console.warn(
+            `[custom-provider] Failed to set models.mode=merge: ${setModeResult.output}`,
+          );
         }
 
-        console.log(`[custom-provider] ✓ Custom provider "${providerId}" configured successfully`);
+        console.log(
+          `[custom-provider] ✓ Custom provider "${providerId}" configured successfully`,
+        );
       }
 
       const channelsHelp = await runCmd(
@@ -1223,7 +1336,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
           );
           extra += `\n[telegram config] exit=${set.code} (output ${set.output.length} chars)\n${set.output || "(no output)"}`;
           extra += `\n[telegram verify] exit=${get.code} (output ${get.output.length} chars)\n${get.output || "(no output)"}`;
-          
+
           // Enable telegram plugin
           console.log("[telegram] Enabling telegram plugin...");
           const enablePlugin = await runCmd(
@@ -1323,13 +1436,15 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
 function redactSecrets(text) {
   if (!text) return text;
   // Very small best-effort redaction. (Config paths/values may still contain secrets.)
-  return String(text)
-    .replace(/(sk-[A-Za-z0-9_-]{10,})/g, "[REDACTED]")
-    .replace(/(gho_[A-Za-z0-9_]{10,})/g, "[REDACTED]")
-    .replace(/(xox[baprs]-[A-Za-z0-9-]{10,})/g, "[REDACTED]")
-    // Telegram bot tokens look like: 123456:ABCDEF...
-    .replace(/(\d{5,}:[A-Za-z0-9_-]{10,})/g, "[REDACTED]")
-    .replace(/(AA[A-Za-z0-9_-]{10,}:\S{10,})/g, "[REDACTED]");
+  return (
+    String(text)
+      .replace(/(sk-[A-Za-z0-9_-]{10,})/g, "[REDACTED]")
+      .replace(/(gho_[A-Za-z0-9_]{10,})/g, "[REDACTED]")
+      .replace(/(xox[baprs]-[A-Za-z0-9-]{10,})/g, "[REDACTED]")
+      // Telegram bot tokens look like: 123456:ABCDEF...
+      .replace(/(\d{5,}:[A-Za-z0-9_-]{10,})/g, "[REDACTED]")
+      .replace(/(AA[A-Za-z0-9_-]{10,}:\S{10,})/g, "[REDACTED]")
+  );
 }
 
 // ========== DEBUG CONSOLE: HELPER FUNCTIONS & ALLOWLIST ==========
@@ -1352,7 +1467,7 @@ const ALLOWED_CONSOLE_COMMANDS = new Set([
   "gateway.restart",
   "gateway.stop",
   "gateway.start",
-  
+
   // OpenClaw CLI commands (all safe, read-only or user-controlled)
   "openclaw.version",
   "openclaw.status",
@@ -1370,7 +1485,7 @@ const ALLOWED_CONSOLE_COMMANDS = new Set([
 app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
   try {
     const { command, arg } = req.body || {};
-    
+
     // Validate command is allowlisted
     if (!command || !ALLOWED_CONSOLE_COMMANDS.has(command)) {
       return res.status(400).json({
@@ -1378,9 +1493,9 @@ app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
         error: `Command not allowed: ${command || "(empty)"}`,
       });
     }
-    
+
     let result;
-    
+
     // Gateway lifecycle commands (wrapper-managed, no openclaw CLI)
     if (command === "gateway.restart") {
       await restartGateway();
@@ -1397,7 +1512,7 @@ app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
       await ensureGatewayRunning();
       result = { code: 0, output: "Gateway started successfully\n" };
     }
-    
+
     // OpenClaw CLI commands
     else if (command === "openclaw.version") {
       result = await runCmd(OPENCLAW_NODE, clawArgs(["--version"]));
@@ -1426,7 +1541,10 @@ app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
           error: "Config path required (e.g., gateway.port)",
         });
       }
-      result = await runCmd(OPENCLAW_NODE, clawArgs(["config", "get", configPath]));
+      result = await runCmd(
+        OPENCLAW_NODE,
+        clawArgs(["config", "get", configPath]),
+      );
     } else if (command === "openclaw.devices.list") {
       result = await runCmd(OPENCLAW_NODE, clawArgs(["devices", "list"]));
     } else if (command === "openclaw.devices.approve") {
@@ -1442,10 +1560,14 @@ app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
       if (!/^[A-Za-z0-9_-]+$/.test(requestId)) {
         return res.status(400).json({
           ok: false,
-          error: "Invalid requestId format (alphanumeric, underscore, dash only)",
+          error:
+            "Invalid requestId format (alphanumeric, underscore, dash only)",
         });
       }
-      result = await runCmd(OPENCLAW_NODE, clawArgs(["devices", "approve", requestId]));
+      result = await runCmd(
+        OPENCLAW_NODE,
+        clawArgs(["devices", "approve", requestId]),
+      );
     } else if (command === "openclaw.plugins.list") {
       result = await runCmd(OPENCLAW_NODE, clawArgs(["plugins", "list"]));
     } else if (command === "openclaw.plugins.enable") {
@@ -1461,10 +1583,14 @@ app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
       if (!/^[A-Za-z0-9_-]+$/.test(pluginName)) {
         return res.status(400).json({
           ok: false,
-          error: "Invalid plugin name format (alphanumeric, underscore, dash only)",
+          error:
+            "Invalid plugin name format (alphanumeric, underscore, dash only)",
         });
       }
-      result = await runCmd(OPENCLAW_NODE, clawArgs(["plugins", "enable", pluginName]));
+      result = await runCmd(
+        OPENCLAW_NODE,
+        clawArgs(["plugins", "enable", pluginName]),
+      );
     } else {
       // Should never reach here due to allowlist check
       return res.status(500).json({
@@ -1472,10 +1598,10 @@ app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
         error: "Internal error: command allowlisted but not implemented",
       });
     }
-    
+
     // Apply secret redaction to all output
     const output = redactSecrets(result.output || "");
-    
+
     return res.json({
       ok: result.code === 0,
       output,
@@ -1496,27 +1622,33 @@ app.get("/setup/api/debug", requireSetupAuth, async (_req, res) => {
     OPENCLAW_NODE,
     clawArgs(["channels", "add", "--help"]),
   );
-  
+
   // Enhanced diagnostics: channel config checks
   let telegramConfig = null;
   let discordConfig = null;
   try {
-    const tg = await runCmd(OPENCLAW_NODE, clawArgs(["config", "get", "channels.telegram"]));
+    const tg = await runCmd(
+      OPENCLAW_NODE,
+      clawArgs(["config", "get", "channels.telegram"]),
+    );
     if (tg.code === 0) {
       telegramConfig = redactSecrets(tg.output.trim());
     }
   } catch {}
-  
+
   try {
-    const dc = await runCmd(OPENCLAW_NODE, clawArgs(["config", "get", "channels.discord"]));
+    const dc = await runCmd(
+      OPENCLAW_NODE,
+      clawArgs(["config", "get", "channels.discord"]),
+    );
     if (dc.code === 0) {
       discordConfig = redactSecrets(dc.output.trim());
     }
   } catch {}
-  
+
   // Gateway diagnostics
   const gatewayReachable = isConfigured() ? await probeGateway() : false;
-  
+
   // Doctor output (cached or fresh)
   let doctorOutput = lastDoctorOutput;
   if (!doctorOutput && isConfigured()) {
@@ -1525,7 +1657,7 @@ app.get("/setup/api/debug", requireSetupAuth, async (_req, res) => {
       doctorOutput = redactSecrets(dr.output || "");
     } catch {}
   }
-  
+
   res.json({
     wrapper: {
       node: process.version,
@@ -1568,7 +1700,7 @@ app.get("/setup/api/config/raw", requireSetupAuth, async (_req, res) => {
     const cfgPath = configPath();
     const exists = fs.existsSync(cfgPath);
     let content = "";
-    
+
     if (exists) {
       try {
         content = fs.readFileSync(cfgPath, "utf8");
@@ -1579,7 +1711,7 @@ app.get("/setup/api/config/raw", requireSetupAuth, async (_req, res) => {
         });
       }
     }
-    
+
     return res.json({
       ok: true,
       path: cfgPath,
@@ -1599,14 +1731,14 @@ app.get("/setup/api/config/raw", requireSetupAuth, async (_req, res) => {
 app.post("/setup/api/config/raw", requireSetupAuth, async (req, res) => {
   try {
     const { content } = req.body || {};
-    
+
     if (typeof content !== "string") {
       return res.status(400).json({
         ok: false,
         error: "Missing or invalid 'content' field (must be string)",
       });
     }
-    
+
     // Size limit: 500KB to prevent DoS
     const MAX_SIZE = 500 * 1024;
     if (content.length > MAX_SIZE) {
@@ -1617,7 +1749,7 @@ app.post("/setup/api/config/raw", requireSetupAuth, async (req, res) => {
         error: `Config file too large: ${sizeKB}KB (max ${maxKB}KB)`,
       });
     }
-    
+
     // Validate JSON syntax
     try {
       JSON.parse(content);
@@ -1627,14 +1759,17 @@ app.post("/setup/api/config/raw", requireSetupAuth, async (req, res) => {
         error: `Invalid JSON: ${String(err)}`,
       });
     }
-    
+
     const cfgPath = configPath();
-    
+
     // Create timestamped backup if file exists
     if (fs.existsSync(cfgPath)) {
-      const timestamp = new Date().toISOString().replace(/:/g, "-").replace(/\./g, "-");
+      const timestamp = new Date()
+        .toISOString()
+        .replace(/:/g, "-")
+        .replace(/\./g, "-");
       const backupPath = `${cfgPath}.bak-${timestamp}`;
-      
+
       try {
         // Use copyFileSync for atomic backup
         fs.copyFileSync(cfgPath, backupPath);
@@ -1646,7 +1781,7 @@ app.post("/setup/api/config/raw", requireSetupAuth, async (req, res) => {
         });
       }
     }
-    
+
     // Write new config with secure permissions
     try {
       fs.writeFileSync(cfgPath, content, { encoding: "utf8", mode: 0o600 });
@@ -1657,7 +1792,7 @@ app.post("/setup/api/config/raw", requireSetupAuth, async (req, res) => {
         error: `Failed to write config file: ${String(err)}`,
       });
     }
-    
+
     // Restart gateway to apply changes
     let restartOutput = "";
     try {
@@ -1668,7 +1803,7 @@ app.post("/setup/api/config/raw", requireSetupAuth, async (req, res) => {
       restartOutput = `Warning: Config saved but gateway restart failed: ${String(err)}`;
       console.error("[config-editor] Gateway restart failed:", err);
     }
-    
+
     return res.json({
       ok: true,
       message: "Config saved successfully",
@@ -1690,10 +1825,10 @@ app.get("/setup/api/devices/pending", requireSetupAuth, async (_req, res) => {
   try {
     // Run openclaw devices list command
     const result = await runCmd(OPENCLAW_NODE, clawArgs(["devices", "list"]));
-    
+
     // Extract requestIds from output
     const requestIds = extractDeviceRequestIds(result.output || "");
-    
+
     return res.json({
       ok: result.code === 0,
       requestIds,
@@ -1713,14 +1848,14 @@ app.get("/setup/api/devices/pending", requireSetupAuth, async (_req, res) => {
 app.post("/setup/api/devices/approve", requireSetupAuth, async (req, res) => {
   try {
     const { requestId } = req.body || {};
-    
+
     if (!requestId) {
       return res.status(400).json({
         ok: false,
         error: "Missing 'requestId' field",
       });
     }
-    
+
     // Validate requestId format (alphanumeric + underscore + dash only)
     if (!/^[A-Za-z0-9_-]+$/.test(requestId)) {
       return res.status(400).json({
@@ -1728,10 +1863,13 @@ app.post("/setup/api/devices/approve", requireSetupAuth, async (req, res) => {
         error: "Invalid requestId format (alphanumeric, underscore, dash only)",
       });
     }
-    
+
     // Run openclaw devices approve command
-    const result = await runCmd(OPENCLAW_NODE, clawArgs(["devices", "approve", requestId]));
-    
+    const result = await runCmd(
+      OPENCLAW_NODE,
+      clawArgs(["devices", "approve", requestId]),
+    );
+
     return res.json({
       ok: result.code === 0,
       output: result.output || "",
@@ -1784,18 +1922,18 @@ function looksSafeTarPath(p) {
   if (p.startsWith("/")) {
     return false;
   }
-  
+
   // Reject Windows drive letters (e.g., C:, D:)
   if (/^[a-zA-Z]:/.test(p)) {
     return false;
   }
-  
+
   // Reject paths containing .. (parent directory traversal)
   const parts = p.split(/[/\\]/);
   if (parts.some((part) => part === "..")) {
     return false;
   }
-  
+
   return true;
 }
 
@@ -1807,10 +1945,10 @@ function readBodyBuffer(req, maxBytes) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let totalSize = 0;
-    
+
     req.on("data", (chunk) => {
       totalSize += chunk.length;
-      
+
       if (totalSize > maxBytes) {
         req.destroy();
         const sizeMB = (totalSize / (1024 * 1024)).toFixed(1);
@@ -1818,14 +1956,14 @@ function readBodyBuffer(req, maxBytes) {
         reject(new Error(`File too large: ${sizeMB}MB (max ${maxMB}MB)`));
         return;
       }
-      
+
       chunks.push(chunk);
     });
-    
+
     req.on("end", () => {
       resolve(Buffer.concat(chunks));
     });
-    
+
     req.on("error", (err) => {
       reject(err);
     });
@@ -1840,20 +1978,25 @@ function readBodyBuffer(req, maxBytes) {
  */
 app.post("/setup/import", requireSetupAuth, async (req, res) => {
   const MAX_UPLOAD_SIZE = 250 * 1024 * 1024; // 250MB
-  
+
   try {
     console.log("[import] Starting backup import...");
-    
+
     // Verify STATE_DIR and WORKSPACE_DIR are under /data for security
     const dataRoot = "/data";
-    if (!isUnderDir(STATE_DIR, dataRoot) || !isUnderDir(WORKSPACE_DIR, dataRoot)) {
-      console.error("[import] Security check failed: STATE_DIR or WORKSPACE_DIR not under /data");
+    if (
+      !isUnderDir(STATE_DIR, dataRoot) ||
+      !isUnderDir(WORKSPACE_DIR, dataRoot)
+    ) {
+      console.error(
+        "[import] Security check failed: STATE_DIR or WORKSPACE_DIR not under /data",
+      );
       return res.status(400).json({
         ok: false,
         error: `Import requires both STATE_DIR and WORKSPACE_DIR under /data. Current: STATE_DIR=${STATE_DIR}, WORKSPACE_DIR=${WORKSPACE_DIR}. Set OPENCLAW_STATE_DIR=/data/.openclaw and OPENCLAW_WORKSPACE_DIR=/data/workspace in Railway Variables.`,
       });
     }
-    
+
     // Stop gateway before import to prevent file conflicts
     console.log("[import] Stopping gateway...");
     if (gatewayProc) {
@@ -1864,34 +2007,37 @@ app.post("/setup/import", requireSetupAuth, async (req, res) => {
         console.warn(`[import] Failed to stop gateway: ${err.message}`);
       }
     }
-    
+
     // Also pkill any orphaned gateway processes
     try {
       await runCmd("pkill", ["-f", "gateway run"], { timeoutMs: 5000 });
     } catch {
       // Ignore pkill errors (process may not exist)
     }
-    
+
     // Wait for gateway to fully stop
     await sleep(2000);
     console.log("[import] Gateway stopped");
-    
+
     // Read request body with size limit
     console.log("[import] Reading upload (max 250MB)...");
     const buffer = await readBodyBuffer(req, MAX_UPLOAD_SIZE);
     console.log(`[import] Received ${buffer.length} bytes`);
-    
+
     // Write to temp file for extraction
-    const tmpFile = path.join(os.tmpdir(), `openclaw-import-${Date.now()}.tar.gz`);
+    const tmpFile = path.join(
+      os.tmpdir(),
+      `openclaw-import-${Date.now()}.tar.gz`,
+    );
     fs.writeFileSync(tmpFile, buffer);
     console.log(`[import] Wrote temp file: ${tmpFile}`);
-    
+
     try {
       // Extract tar to /data with security filter
       console.log("[import] Extracting archive to /data...");
       let extractedCount = 0;
       let filteredCount = 0;
-      
+
       await tar.x({
         file: tmpFile,
         cwd: dataRoot,
@@ -1909,12 +2055,14 @@ app.post("/setup/import", requireSetupAuth, async (req, res) => {
           console.warn(`[import] tar warning: ${code} - ${message}`);
         },
       });
-      
-      console.log(`[import] Extraction complete: ${extractedCount} files extracted, ${filteredCount} filtered`);
-      
+
+      console.log(
+        `[import] Extraction complete: ${extractedCount} files extracted, ${filteredCount} filtered`,
+      );
+
       // Cleanup temp file
       fs.rmSync(tmpFile, { force: true });
-      
+
       // Restart gateway to load imported config
       console.log("[import] Restarting gateway...");
       try {
@@ -1927,21 +2075,19 @@ app.post("/setup/import", requireSetupAuth, async (req, res) => {
           error: `Import succeeded but gateway restart failed: ${String(err)}`,
         });
       }
-      
+
       return res.json({
         ok: true,
         message: `Import successful: ${extractedCount} files extracted, ${filteredCount} filtered`,
       });
-      
     } catch (err) {
       // Cleanup temp file on error
       try {
         fs.rmSync(tmpFile, { force: true });
       } catch {}
-      
+
       throw err;
     }
-    
   } catch (err) {
     console.error("[import] Error:", err);
     return res.status(500).json({
@@ -1966,25 +2112,245 @@ app.post("/setup/api/reset", requireSetupAuth, async (_req, res) => {
         console.warn(`[reset] Failed to stop gateway: ${err.message}`);
       }
     }
-    
+
     // Also pkill any orphaned gateway processes
     try {
       await runCmd("pkill", ["-f", "gateway run"], { timeoutMs: 5000 });
     } catch {
       // Ignore pkill errors (process may not exist)
     }
-    
+
     // Wait for gateway to fully stop
     await sleep(1000);
-    
+
     console.log("[reset] Deleting config file...");
     fs.rmSync(configPath(), { force: true });
-    
+
     res
       .type("text/plain")
       .send("OK - deleted config file. You can rerun setup now.");
   } catch (err) {
     res.status(500).type("text/plain").send(String(err));
+  }
+});
+
+// ========== TAILSCALE API ENDPOINTS ==========
+
+// Helper: check if Tailscale is installed
+async function isTailscaleInstalled() {
+  const result = await runCmd("which", ["tailscale"], { timeoutMs: 5000 });
+  return result.code === 0;
+}
+
+// Helper: install Tailscale on-demand
+let tailscaleInstalling = null;
+async function installTailscale() {
+  // Prevent concurrent installs
+  if (tailscaleInstalling) return tailscaleInstalling;
+  tailscaleInstalling = (async () => {
+    try {
+      console.log("[tailscale] Installing Tailscale on-demand...");
+      const result = await runCmd(
+        "bash",
+        ["-c", "curl -fsSL https://tailscale.com/install.sh | sh"],
+        {
+          timeoutMs: 120_000, // 2 min — download + install can be slow
+        },
+      );
+      if (result.code !== 0) {
+        throw new Error(
+          `Install script failed (exit ${result.code}): ${result.output}`,
+        );
+      }
+      console.log("[tailscale] Installation complete");
+      return { ok: true };
+    } catch (err) {
+      console.error("[tailscale] Installation failed:", err);
+      return { ok: false, error: String(err) };
+    } finally {
+      tailscaleInstalling = null;
+    }
+  })();
+  return tailscaleInstalling;
+}
+
+/**
+ * POST /setup/api/tailscale/install - Install Tailscale on-demand
+ * No args required. Idempotent — returns success if already installed.
+ */
+app.post(
+  "/setup/api/tailscale/install",
+  requireSetupAuth,
+  async (_req, res) => {
+    try {
+      if (await isTailscaleInstalled()) {
+        return res.json({
+          ok: true,
+          message: "Tailscale is already installed",
+        });
+      }
+      const result = await installTailscale();
+      if (!result.ok) {
+        return res.status(500).json({ ok: false, error: result.error });
+      }
+      return res.json({
+        ok: true,
+        message: "Tailscale installed successfully",
+      });
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: String(err) });
+    }
+  },
+);
+
+/**
+ * POST /setup/api/tailscale/configure - Configure and start Tailscale
+ * Expects: { authKey: "tskey-auth-...", hostname: "openclaw-railway" }
+ * Will auto-install Tailscale if not present.
+ */
+app.post(
+  "/setup/api/tailscale/configure",
+  requireSetupAuth,
+  async (req, res) => {
+    try {
+      const { authKey, hostname } = req.body || {};
+
+      if (!authKey || !authKey.startsWith("tskey-")) {
+        return res.status(400).json({
+          ok: false,
+          error: "Invalid Tailscale auth key. Must start with 'tskey-auth-'.",
+        });
+      }
+
+      const tsHostname = (hostname || "openclaw-railway").replace(
+        /[^a-zA-Z0-9-]/g,
+        "",
+      );
+
+      // Auto-install Tailscale if not present
+      if (!(await isTailscaleInstalled())) {
+        console.log("[tailscale] Not installed — installing on-demand...");
+        const installResult = await installTailscale();
+        if (!installResult.ok) {
+          return res.status(500).json({
+            ok: false,
+            error: `Failed to install Tailscale: ${installResult.error}`,
+          });
+        }
+      }
+
+      // Start tailscaled daemon if not running
+      const statusCheck = await runCmd("tailscale", ["status", "--json"], {
+        timeoutMs: 10000,
+      });
+      if (statusCheck.code !== 0) {
+        console.log("[tailscale] Starting tailscaled daemon...");
+        // Run tailscaled in background (userspace networking for containers)
+        childProcess
+          .spawn(
+            "tailscaled",
+            ["--tun=userspace-networking", "--socks5-server=localhost:1055"],
+            {
+              detached: true,
+              stdio: "ignore",
+            },
+          )
+          .unref();
+        await sleep(2000);
+      }
+
+      // Authenticate with auth key
+      console.log(`[tailscale] Authenticating with hostname: ${tsHostname}`);
+      const upResult = await runCmd(
+        "tailscale",
+        [
+          "up",
+          "--authkey",
+          authKey,
+          "--hostname",
+          tsHostname,
+          "--accept-routes",
+        ],
+        { timeoutMs: 30000 },
+      );
+
+      if (upResult.code !== 0) {
+        console.error(`[tailscale] Failed to authenticate: ${upResult.output}`);
+        return res.status(500).json({
+          ok: false,
+          error: `Tailscale authentication failed: ${upResult.output}`,
+        });
+      }
+
+      // Get status
+      const finalStatus = await runCmd("tailscale", ["status", "--json"], {
+        timeoutMs: 10000,
+      });
+      let ip = "";
+      let tsHostnameActual = tsHostname;
+      try {
+        const s = JSON.parse(finalStatus.output);
+        if (s.Self) {
+          ip = (s.Self.TailscaleIPs || [])[0] || "";
+          tsHostnameActual = s.Self.HostName || tsHostname;
+        }
+      } catch {}
+
+      console.log(`[tailscale] Connected: ${tsHostnameActual} (${ip})`);
+
+      return res.json({
+        ok: true,
+        hostname: tsHostnameActual,
+        ip,
+        message: "Tailscale connected successfully",
+      });
+    } catch (err) {
+      console.error("[tailscale] Error:", err);
+      return res.status(500).json({
+        ok: false,
+        error: `Tailscale error: ${String(err)}`,
+      });
+    }
+  },
+);
+
+/**
+ * GET /setup/api/tailscale/status - Get Tailscale connection status
+ * Returns installed=false if Tailscale is not present (not an error).
+ */
+app.get("/setup/api/tailscale/status", requireSetupAuth, async (_req, res) => {
+  try {
+    if (!(await isTailscaleInstalled())) {
+      return res.json({ ok: true, installed: false, connected: false });
+    }
+    const result = await runCmd("tailscale", ["status", "--json"], {
+      timeoutMs: 10000,
+    });
+    if (result.code !== 0) {
+      return res.json({
+        ok: true,
+        installed: true,
+        connected: false,
+        error: "Tailscale not running",
+      });
+    }
+    const status = JSON.parse(result.output);
+    const self = status.Self || {};
+    return res.json({
+      ok: true,
+      installed: true,
+      connected: true,
+      hostname: self.HostName || "",
+      ip: (self.TailscaleIPs || [])[0] || "",
+      online: self.Online || false,
+    });
+  } catch (err) {
+    return res.json({
+      ok: false,
+      installed: false,
+      connected: false,
+      error: String(err),
+    });
   }
 });
 
@@ -2070,8 +2436,13 @@ const proxy = httpProxy.createProxyServer({
 // Common errors: ECONNREFUSED (gateway not ready), ECONNRESET (client disconnect).
 proxy.on("error", (err, req, res) => {
   // Suppress ECONNREFUSED spam during normal gateway startup
-  if (err.code === "ECONNREFUSED" && currentStartupState === StartupState.STARTING) {
-    debug(`[proxy] Suppressed ECONNREFUSED during startup (${req?.method} ${req?.url})`);
+  if (
+    err.code === "ECONNREFUSED" &&
+    currentStartupState === StartupState.STARTING
+  ) {
+    debug(
+      `[proxy] Suppressed ECONNREFUSED during startup (${req?.method} ${req?.url})`,
+    );
     // Don't log or respond - gateway is still booting, this is expected
     if (res && !res.headersSent) {
       res.writeHead(503, { "Content-Type": "text/plain" });
@@ -2081,7 +2452,7 @@ proxy.on("error", (err, req, res) => {
   }
 
   console.error("[proxy] error:", err.message, `(${req?.method} ${req?.url})`);
-  
+
   // Only send error response if headers haven't been sent yet
   if (res && !res.headersSent) {
     try {
@@ -2097,20 +2468,22 @@ proxy.on("error", (err, req, res) => {
         "- Check Debug Console in /setup",
         "- Run 'gateway.restart' in Debug Console",
       ].join("\n");
-      
+
       res.writeHead(502, { "Content-Type": "text/plain" });
       res.end(troubleshooting);
     } catch {
       // Response already partially sent, can't recover
     }
   }
-  
+
   // Don't throw - just log and continue
 });
 
 // Inject auth token into HTTP proxy requests
 proxy.on("proxyReq", (proxyReq, req, res) => {
-  debug(`[proxy] HTTP ${req.method} ${req.url} - injecting token: ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}...`);
+  debug(
+    `[proxy] HTTP ${req.method} ${req.url} - injecting token: ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}...`,
+  );
   proxyReq.setHeader("Authorization", `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
 });
 
@@ -2120,6 +2493,64 @@ proxy.on("proxyReqWs", (proxyReq, req, socket, options, head) => {
   console.log(`[proxy-event] Headers:`, JSON.stringify(proxyReq.getHeaders()));
 });
 
+// ========== GATEWAY TOKEN ENTRY PAGE ==========
+// Serves a friendly token entry page at /openclaw/token so users don't have to hunt for the field.
+// The gateway itself requires a Bearer token; this page lets the user enter it and stores it in a cookie.
+app.get("/openclaw/token", (_req, res) => {
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenClaw — Gateway Access</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0a0e17;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:1rem}
+    .box{background:#111827;border:1px solid #1e293b;border-radius:1rem;padding:2rem;max-width:460px;width:100%;box-shadow:0 4px 24px rgba(0,0,0,.4);text-align:center}
+    h2{margin-bottom:.5rem;font-size:1.3rem}
+    p{margin-bottom:1.25rem;color:#94a3b8;font-size:.9rem}
+    label{display:block;text-align:left;font-size:.8rem;color:#94a3b8;margin-bottom:.3rem;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+    input{width:100%;padding:.65rem .75rem;background:#0d1321;border:1px solid #1e293b;border-radius:.375rem;color:#e2e8f0;font-size:.95rem;margin-bottom:1rem}
+    input:focus{outline:none;border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.15)}
+    button{width:100%;padding:.7rem;background:#6366f1;color:white;border:none;border-radius:.375rem;font-size:1rem;font-weight:600;cursor:pointer;transition:background .2s}
+    button:hover{background:#818cf8}
+    .hint{margin-top:1rem;font-size:.8rem;color:#64748b}
+    .hint a{color:#6366f1}
+    .error{color:#ef4444;font-size:.85rem;margin-bottom:.75rem;display:none}
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h2>🦞 OpenClaw Gateway</h2>
+    <p>Enter your gateway token to access the OpenClaw Control UI.</p>
+    <div class="error" id="error"></div>
+    <div style="text-align:left;margin-bottom:1.25rem">
+      <label>Gateway Token</label>
+      <input id="token" type="password" placeholder="Paste your gateway token" autofocus />
+    </div>
+    <button id="go">Access OpenClaw →</button>
+    <p class="hint">Find your token in the <a href="/setup">Setup Wizard</a> under Config Editor, or check your <code>OPENCLAW_GATEWAY_TOKEN</code> environment variable.</p>
+  </div>
+  <script>
+    const tokenInput = document.getElementById("token");
+    const errorEl = document.getElementById("error");
+    document.getElementById("go").addEventListener("click", submit);
+    tokenInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+    function submit() {
+      const token = tokenInput.value.trim();
+      if (!token) { showError("Please enter a token"); return; }
+      // Store token in a cookie (httpOnly=false so gateway JS can also use it if needed)
+      document.cookie = "openclaw_token=" + encodeURIComponent(token) + ";path=/;max-age=31536000;SameSite=Strict";
+      // Redirect to the control UI
+      window.location.href = "/openclaw";
+    }
+    function showError(msg) { errorEl.textContent = msg; errorEl.style.display = "block"; }
+  </script>
+</body>
+</html>`;
+  res.type("text/html").send(html);
+});
+
 app.use(async (req, res) => {
   // If not configured, force users to /setup for any non-setup routes.
   if (!isConfigured() && !req.path.startsWith("/setup")) {
@@ -2127,8 +2558,14 @@ app.use(async (req, res) => {
   }
 
   // Show startup page if gateway is still booting
-  if (currentStartupState === StartupState.STARTING && !req.path.startsWith("/setup") && req.path !== "/startup-status") {
-    const elapsed = gatewayStartTime ? Math.floor((Date.now() - gatewayStartTime) / 1000) : 0;
+  if (
+    currentStartupState === StartupState.STARTING &&
+    !req.path.startsWith("/setup") &&
+    req.path !== "/startup-status"
+  ) {
+    const elapsed = gatewayStartTime
+      ? Math.floor((Date.now() - gatewayStartTime) / 1000)
+      : 0;
     const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2181,13 +2618,17 @@ app.use(async (req, res) => {
         "",
         "Recent gateway diagnostics:",
         lastGatewayError ? `  Last error: ${lastGatewayError}` : "",
-        lastGatewayExit ? `  Last exit: code=${lastGatewayExit.code} signal=${lastGatewayExit.signal} at=${lastGatewayExit.at}` : "",
+        lastGatewayExit
+          ? `  Last exit: code=${lastGatewayExit.code} signal=${lastGatewayExit.signal} at=${lastGatewayExit.at}`
+          : "",
         "",
-        lastDoctorOutput ? `Doctor output (last 500 chars):\n${lastDoctorOutput.slice(0, 500)}` : "Run 'openclaw doctor' in Debug Console for detailed diagnostics",
+        lastDoctorOutput
+          ? `Doctor output (last 500 chars):\n${lastDoctorOutput.slice(0, 500)}`
+          : "Run 'openclaw doctor' in Debug Console for detailed diagnostics",
       ]
         .filter(Boolean)
         .join("\n");
-      
+
       return res.status(503).type("text/plain").send(errorMsg);
     }
   }
@@ -2204,7 +2645,10 @@ const server = app.listen(PORT, async () => {
 
   // Harden state dir for OpenClaw and avoid missing credentials dir on fresh volumes.
   try {
-    fs.mkdirSync(path.join(STATE_DIR, "credentials"), { recursive: true, mode: 0o700 });
+    fs.mkdirSync(path.join(STATE_DIR, "credentials"), {
+      recursive: true,
+      mode: 0o700,
+    });
   } catch {}
   try {
     fs.chmodSync(STATE_DIR, 0o700);
@@ -2221,7 +2665,9 @@ const server = app.listen(PORT, async () => {
       await ensureGatewayRunning();
       console.log("[wrapper] gateway ready");
     } catch (err) {
-      console.error(`[wrapper] gateway failed to start at boot: ${String(err)}`);
+      console.error(
+        `[wrapper] gateway failed to start at boot: ${String(err)}`,
+      );
     }
   }
 });
@@ -2240,7 +2686,9 @@ server.on("upgrade", async (req, socket, head) => {
   }
 
   // Inject auth token via headers option (req.headers modification doesn't work for WS)
-  debug(`[ws-upgrade] Proxying WebSocket upgrade with token: ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}...`);
+  debug(
+    `[ws-upgrade] Proxying WebSocket upgrade with token: ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}...`,
+  );
 
   proxy.ws(req, socket, head, {
     target: GATEWAY_TARGET,
@@ -2253,12 +2701,12 @@ server.on("upgrade", async (req, socket, head) => {
 // Graceful shutdown handler for Railway deployments
 process.on("SIGTERM", async () => {
   console.log("[shutdown] Received SIGTERM, starting graceful shutdown...");
-  
+
   // Close HTTP server (stops accepting new connections)
   server.close(() => {
     console.log("[shutdown] HTTP server closed");
   });
-  
+
   // Stop gateway process
   if (gatewayProc) {
     console.log("[shutdown] Stopping gateway process...");
@@ -2269,14 +2717,14 @@ process.on("SIGTERM", async () => {
       console.error(`[shutdown] Failed to stop gateway: ${err.message}`);
     }
   }
-  
+
   // Give in-flight requests time to complete (Railway allows ~10s)
   // Wait up to 5 seconds for graceful shutdown
   setTimeout(() => {
     console.log("[shutdown] Graceful shutdown timeout, forcing exit");
     process.exit(0);
   }, 5000);
-  
+
   // If all connections close naturally, exit immediately
   server.on("close", () => {
     console.log("[shutdown] All connections closed, exiting cleanly");

@@ -1,229 +1,806 @@
 <!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Openclaw Setup</title>
-  <link rel="stylesheet" href="/setup/styles.css" />
-</head>
-<body>
-  <h1>Openclaw Setup</h1>
-  <p class="muted">This wizard configures Openclaw by running the same onboarding command it uses in the terminal, but from the browser.</p>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenClaw Setup</title>
+    <link rel="stylesheet" href="/setup/styles.css" />
+  </head>
+  <body>
+    <!-- ========== TOAST CONTAINER ========== -->
+    <div id="toastContainer" class="toast-container"></div>
 
-  <div class="card">
-    <h2>Status</h2>
-    <div id="status">Loading...</div>
-    <div id="statusDetails" style="margin-top: 0.75rem; padding: 0.75rem; background: #f5f5f5; border-radius: 4px;"></div>
-    <div style="margin-top: 0.75rem">
-      <a href="/openclaw" target="_blank">Open Openclaw UI</a>
-      &nbsp;|&nbsp;
-      <a href="/setup/export" target="_blank">Download backup (.tar.gz)</a>
-      &nbsp;|&nbsp;
-      <a href="/healthz" target="_blank">Health Check</a>
-    </div>
-    <div style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #ddd;">
-      <p class="muted" style="margin: 0;">
-        Want to contribute? Check out the <a href="https://github.com/moltinginstar/moltbot/blob/main/CONTRIBUTING.md" target="_blank">Contributing Guide</a>
-      </p>
-    </div>
-    
-    <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd;">
-      <h3 style="margin-top: 0; font-size: 1rem;">Import Backup</h3>
-      <p class="muted">Restore config and workspace from a previous backup. This will overwrite existing data.</p>
-      
-      <label>Backup file (.tar.gz)</label>
-      <input id="importFile" type="file" accept=".tar.gz,.tgz,application/gzip,application/x-gzip" />
-      
-      <button id="importButton">Import backup</button>
-      <pre id="importOutput" style="margin-top: 1rem; max-height: 200px; overflow-y: auto; background: #f5f5f5; padding: 0.75rem; border-radius: 4px;"></pre>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>Debug Console</h2>
-    <p class="muted">Run OpenClaw commands without SSH access. All commands are allowlisted for security.</p>
-    
-    <label>Command</label>
-    <select id="consoleCommand">
-      <option value="">-- Select command --</option>
-      <optgroup label="Gateway Lifecycle">
-        <option value="gateway.restart">gateway.restart - Restart gateway process</option>
-        <option value="gateway.stop">gateway.stop - Stop gateway process</option>
-        <option value="gateway.start">gateway.start - Start gateway process</option>
-      </optgroup>
-      <optgroup label="OpenClaw Status">
-        <option value="openclaw.version">openclaw.version - Show OpenClaw version</option>
-        <option value="openclaw.status">openclaw.status - Show gateway status</option>
-        <option value="openclaw.health">openclaw.health - Run health check</option>
-        <option value="openclaw.doctor">openclaw.doctor - Run diagnostics</option>
-      </optgroup>
-      <optgroup label="Logs & Config">
-        <option value="openclaw.logs.tail">openclaw.logs.tail - Show recent logs (arg: count)</option>
-        <option value="openclaw.config.get">openclaw.config.get - Get config value (arg: path)</option>
-      </optgroup>
-      <optgroup label="Devices">
-        <option value="openclaw.devices.list">openclaw.devices.list - List devices</option>
-        <option value="openclaw.devices.approve">openclaw.devices.approve - Approve device (arg: requestId)</option>
-      </optgroup>
-      <optgroup label="Plugins">
-        <option value="openclaw.plugins.list">openclaw.plugins.list - List plugins</option>
-        <option value="openclaw.plugins.enable">openclaw.plugins.enable - Enable plugin (arg: name)</option>
-      </optgroup>
-    </select>
-    
-    <label>Argument (if required)</label>
-    <input id="consoleArg" type="text" placeholder="e.g., 50 for logs tail, gateway.port for config get, requestId for device approve" />
-    <div class="muted" style="margin-top: 0.25rem">
-      Some commands require arguments: logs tail (count), config get (path), devices approve (requestId), plugins enable (name).
-    </div>
-    
-    <button id="consoleRun">Run Command</button>
-    <pre id="consoleOutput" style="margin-top: 1rem; max-height: 400px; overflow-y: auto; background: #f5f5f5; padding: 0.75rem; border-radius: 4px;"></pre>
-  </div>
-
-  <div class="card">
-    <h2>Config Editor</h2>
-    <p class="muted">Edit openclaw.json directly. Automatic backups are created before saving. Gateway restarts automatically after save.</p>
-    
-    <div class="muted" style="margin-bottom: 0.5rem">
-      Config file: <code id="configPath">Loading...</code>
-    </div>
-    
-    <label>JSON Configuration</label>
-    <textarea id="configContent" style="font-family: 'Monaco', 'Menlo', 'Consolas', monospace; font-size: 12px; height: 260px; resize: vertical;"></textarea>
-    
-    <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
-      <button id="configReload">Reload from disk</button>
-      <button id="configSave">Save & restart gateway</button>
-    </div>
-    
-    <pre id="configOutput" style="margin-top: 1rem; max-height: 200px; overflow-y: auto; background: #f5f5f5; padding: 0.75rem; border-radius: 4px;"></pre>
-  </div>
-
-  <div class="card">
-    <h2>1) Model/auth provider</h2>
-    <p class="muted">Matches the groups shown in the terminal onboarding.</p>
-    <label>Provider group</label>
-    <select id="authGroup">
-      <option value="">Select provider group...</option>
-    </select>
-
-    <label>Auth method</label>
-    <select id="authChoice">
-      <option value="">Select auth method...</option>
-    </select>
-
-    <label>Key / Token (if required)</label>
-    <input id="authSecret" type="password" placeholder="Paste API key or setup-token here" />
-    <div id="authSecretHint" class="muted" style="margin-top: 0.25rem"></div>
-
-    <label>Wizard flow</label>
-    <select id="flow">
-      <option value="quickstart">quickstart</option>
-      <option value="advanced">advanced</option>
-      <option value="manual">manual</option>
-    </select>
-  </div>
-
-  <div class="card">
-    <h2>2) Optional: Channels</h2>
-    <p class="muted">You can also add channels later inside Openclaw, but this helps you get messaging working immediately.</p>
-
-    <label>Telegram bot token (optional)</label>
-    <input id="telegramToken" type="password" placeholder="123456:ABC..." />
-    <div class="muted" style="margin-top: 0.25rem">
-      Get it from BotFather: open Telegram, message <code>@BotFather</code>, run <code>/newbot</code>, then copy the token.
-    </div>
-
-    <label>Discord bot token (optional)</label>
-    <input id="discordToken" type="password" placeholder="Bot token" />
-    <div class="muted" style="margin-top: 0.25rem">
-      Get it from the Discord Developer Portal: create an application, add a Bot, then copy the Bot Token.<br/>
-      <strong>Important:</strong> Enable <strong>MESSAGE CONTENT INTENT</strong> in Bot → Privileged Gateway Intents, or the bot will crash on startup.
-    </div>
-
-    <label>Slack bot token (optional)</label>
-    <input id="slackBotToken" type="password" placeholder="xoxb-..." />
-
-    <label>Slack app token (optional)</label>
-    <input id="slackAppToken" type="password" placeholder="xapp-..." />
-  </div>
-
-  <div class="card">
-    <h2>2b) Advanced: Custom OpenAI-compatible provider (optional)</h2>
-    <p class="muted">Add a custom provider that uses OpenAI-compatible API (e.g., local LLM, proxy service). This provider will be merged with built-in providers.</p>
-
-    <label>Provider ID</label>
-    <input id="customProviderId" type="text" placeholder="my-custom-provider" />
-    <div class="muted" style="margin-top: 0.25rem">
-      Alphanumeric, underscores, and dashes only (e.g., "ollama", "local-llm", "my_proxy").
-    </div>
-
-    <label>Base URL</label>
-    <input id="customProviderBaseUrl" type="text" placeholder="https://api.example.com/v1" />
-    <div class="muted" style="margin-top: 0.25rem">
-      Must include <code>/v1</code> suffix for OpenAI compatibility (e.g., "http://localhost:11434/v1").
-    </div>
-
-    <label>API Type</label>
-    <select id="customProviderApi">
-      <option value="">-- Select API type --</option>
-      <option value="openai-completions">openai-completions</option>
-      <option value="openai-responses">openai-responses</option>
-    </select>
-
-    <label>API Key Environment Variable (optional)</label>
-    <input id="customProviderApiKeyEnv" type="text" placeholder="MY_PROVIDER_API_KEY" />
-    <div class="muted" style="margin-top: 0.25rem">
-      Environment variable name containing the API key (e.g., "OLLAMA_API_KEY"). Must be uppercase with underscores. Leave empty for unauthenticated providers.
-    </div>
-
-    <label>Model ID (optional)</label>
-    <input id="customProviderModelId" type="text" placeholder="llama3.2" />
-    <div class="muted" style="margin-top: 0.25rem">
-      Default model to use with this provider (e.g., "llama3.2", "gpt-4"). Can be overridden later.
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>3) Run onboarding</h2>
-    <button id="run">Run setup</button>
-    <button id="pairingApprove" class="secondary-button">Approve pairing</button>
-    <button id="reset" class="tertiary-button">Reset setup</button>
-    <pre id="log"></pre>
-    <p class="muted">Reset deletes the Openclaw config file so you can rerun onboarding. Pairing approval lets you grant DM access when dmPolicy=pairing.</p>
-    
-    <details style="margin-top: 1rem;">
-      <summary style="cursor: pointer; font-weight: bold;">Device Pairing Helper</summary>
-      <div style="margin-top: 0.75rem;">
-        <p class="muted">Approve pending device connection requests when using device pairing authentication.</p>
-        <button id="devicesRefresh">Refresh pending devices</button>
-        <div id="devicesList" style="margin-top: 0.75rem;"></div>
+    <!-- ========== MODAL OVERLAY ========== -->
+    <div id="modalOverlay" class="modal-overlay" style="display: none">
+      <div class="modal-box">
+        <h3 id="modalTitle"></h3>
+        <div id="modalBody"></div>
+        <div class="modal-actions">
+          <button id="modalCancel" class="secondary-button">Cancel</button>
+          <button id="modalConfirm">Confirm</button>
+        </div>
       </div>
-    </details>
-  </div>
-
-  <footer style="margin-top: 3rem; padding: 2rem 1rem 1rem; border-top: 2px solid #ddd; text-align: center;">
-    <div style="max-width: 600px; margin: 0 auto;">
-      <h3 style="margin-top: 0; font-size: 1.1rem;">Need Help?</h3>
-      <p class="muted" style="margin-bottom: 1rem;">Get support from the community and contributors</p>
-      <div style="display: flex; justify-content: center; gap: 1.5rem; flex-wrap: wrap;">
-        <a href="https://github.com/codetitlan/moltbot-railway-template/issues/new" target="_blank" style="text-decoration: none;">
-          📝 Report an Issue
-        </a>
-        <a href="https://discord.gg/openclaw" target="_blank" style="text-decoration: none;">
-          💬 Discord Community
-        </a>
-        <a href="https://github.com/codetitlan/moltbot-railway-template#readme" target="_blank" style="text-decoration: none;">
-          📚 Documentation
-        </a>
-      </div>
-      <p class="muted" style="margin-top: 1.5rem; font-size: 0.85em;">
-        moltbot-railway-template | Powered by <a href="https://github.com/moltinginstar/openclaw" target="_blank">OpenClaw</a>
-      </p>
     </div>
-  </footer>
 
-  <script src="/setup/app.js"></script>
-</body>
+    <!-- ========== HEADER ========== -->
+    <header class="app-header">
+      <div class="header-left">
+        <h1>🦞 OpenClaw</h1>
+        <span class="header-badge">Setup Wizard</span>
+      </div>
+      <div class="header-right">
+        <a href="/healthz" target="_blank" class="header-link">Health</a>
+        <a href="/openclaw" target="_blank" class="header-link primary"
+          >Open UI →</a
+        >
+      </div>
+    </header>
+
+    <!-- ========== SYSTEM STATUS DASHBOARD ========== -->
+    <div class="card status-dashboard" id="dashboardCard">
+      <div class="dashboard-grid">
+        <div class="dash-item">
+          <span class="dash-label">Gateway</span>
+          <span class="dash-value" id="dashGateway"
+            ><span class="status-dot gray"></span> Loading...</span
+          >
+        </div>
+        <div class="dash-item">
+          <span class="dash-label">Version</span>
+          <span class="dash-value" id="dashVersion">—</span>
+        </div>
+        <div class="dash-item">
+          <span class="dash-label">Channels</span>
+          <span class="dash-value" id="dashChannels">—</span>
+        </div>
+        <div class="dash-item">
+          <span class="dash-label">Tailscale</span>
+          <span class="dash-value" id="dashTailscale"
+            ><span class="status-dot gray"></span> Not configured</span
+          >
+        </div>
+      </div>
+      <div class="dashboard-actions">
+        <button id="dashRestart" class="btn-sm secondary-button">
+          ↻ Restart
+        </button>
+        <a href="/setup/export" target="_blank" class="btn-sm secondary-button"
+          >⬇ Backup</a
+        >
+        <button id="dashDoctor" class="btn-sm secondary-button">
+          🩺 Doctor
+        </button>
+      </div>
+    </div>
+
+    <!-- ========== WIZARD PROGRESS BAR ========== -->
+    <div class="wizard-progress" id="wizardProgress">
+      <div class="progress-steps">
+        <div class="progress-step active" data-step="1">
+          <span class="step-num">1</span
+          ><span class="step-label">Provider</span>
+        </div>
+        <div class="progress-connector"></div>
+        <div class="progress-step" data-step="2">
+          <span class="step-num">2</span
+          ><span class="step-label">Channels</span>
+        </div>
+        <div class="progress-connector"></div>
+        <div class="progress-step" data-step="3">
+          <span class="step-num">3</span
+          ><span class="step-label">Networking</span>
+        </div>
+        <div class="progress-connector"></div>
+        <div class="progress-step" data-step="4">
+          <span class="step-num">4</span
+          ><span class="step-label">Advanced</span>
+        </div>
+        <div class="progress-connector"></div>
+        <div class="progress-step" data-step="5">
+          <span class="step-num">5</span><span class="step-label">Deploy</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== STEP 1: AI PROVIDER ========== -->
+    <div class="wizard-step active" data-step="1" id="step1">
+      <div class="card">
+        <div class="step-header">
+          <h2>🤖 AI Provider</h2>
+          <p class="muted">
+            Choose which AI model provider to use with OpenClaw.
+          </p>
+        </div>
+
+        <div class="provider-categories" id="providerCategories">
+          <!-- Rendered by JS -->
+        </div>
+
+        <div id="authMethodSection" style="display: none">
+          <label>Auth method</label>
+          <select id="authChoice">
+            <option value="">Select auth method...</option>
+          </select>
+
+          <div class="input-group">
+            <label>Key / Token</label>
+            <div class="password-input">
+              <input
+                id="authSecret"
+                type="password"
+                placeholder="Paste API key or token here"
+              />
+              <button
+                type="button"
+                class="toggle-vis"
+                id="toggleSecret"
+                title="Show/hide"
+              >
+                👁
+              </button>
+            </div>
+            <div id="authSecretHint" class="muted hint-text"></div>
+            <div id="authValidation" class="validation-msg"></div>
+          </div>
+        </div>
+
+        <!-- Hidden select for compatibility -->
+        <select id="authGroup" style="display: none">
+          <option value="">Select provider group...</option>
+        </select>
+
+        <div class="step-nav">
+          <div></div>
+          <button class="next-btn" id="step1Next">Next: Channels →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== STEP 2: CHANNELS ========== -->
+    <div class="wizard-step" data-step="2" id="step2">
+      <div class="card">
+        <div class="step-header">
+          <h2>💬 Messaging Channels</h2>
+          <p class="muted">
+            Connect OpenClaw to messaging platforms. All channels are optional.
+          </p>
+        </div>
+
+        <div class="channel-tabs">
+          <button class="channel-tab active" data-channel="telegram">
+            🤖 Telegram
+          </button>
+          <button class="channel-tab" data-channel="discord">💬 Discord</button>
+          <button class="channel-tab" data-channel="slack">💼 Slack</button>
+        </div>
+
+        <!-- Telegram -->
+        <div class="channel-panel active" data-channel="telegram">
+          <div class="channel-enable">
+            <label class="toggle-label">
+              <input type="checkbox" id="enableTelegram" />
+              <span>Enable Telegram</span>
+            </label>
+          </div>
+          <div class="channel-fields" id="telegramFields" style="display: none">
+            <div class="input-group">
+              <label>Bot Token</label>
+              <div class="password-input">
+                <input
+                  id="telegramToken"
+                  type="password"
+                  placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+                />
+                <button
+                  type="button"
+                  class="toggle-vis"
+                  data-target="telegramToken"
+                >
+                  👁
+                </button>
+              </div>
+              <div id="telegramValidation" class="validation-msg"></div>
+            </div>
+            <details class="help-panel">
+              <summary>📖 How to get a Telegram Bot Token</summary>
+              <div class="help-content">
+                <ol>
+                  <li>
+                    Open Telegram and search for
+                    <a href="https://t.me/BotFather" target="_blank"
+                      >@BotFather</a
+                    >
+                  </li>
+                  <li>Send <code>/newbot</code> and follow the prompts</li>
+                  <li>
+                    Copy the token (looks like <code>123456:ABC-DEF...</code>)
+                  </li>
+                </ol>
+                <a
+                  href="https://core.telegram.org/bots/tutorial"
+                  target="_blank"
+                  class="help-link"
+                  >Official Docs ↗</a
+                >
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <!-- Discord -->
+        <div class="channel-panel" data-channel="discord">
+          <div class="channel-enable">
+            <label class="toggle-label">
+              <input type="checkbox" id="enableDiscord" />
+              <span>Enable Discord</span>
+            </label>
+          </div>
+          <div class="channel-fields" id="discordFields" style="display: none">
+            <div class="alert alert-warning">
+              <strong>⚠️ CRITICAL: Enable MESSAGE CONTENT INTENT</strong>
+              <p>Your bot <strong>will crash</strong> without this!</p>
+              <ol>
+                <li>
+                  <a
+                    href="https://discord.com/developers/applications"
+                    target="_blank"
+                    >Discord Developer Portal</a
+                  >
+                  → your app → <strong>Bot</strong>
+                </li>
+                <li>Scroll to <strong>Privileged Gateway Intents</strong></li>
+                <li>Toggle ON: <strong>MESSAGE CONTENT INTENT</strong></li>
+                <li>Click <strong>Save Changes</strong></li>
+              </ol>
+            </div>
+            <div class="input-group">
+              <label>Bot Token</label>
+              <div class="password-input">
+                <input
+                  id="discordToken"
+                  type="password"
+                  placeholder="Paste Discord bot token"
+                />
+                <button
+                  type="button"
+                  class="toggle-vis"
+                  data-target="discordToken"
+                >
+                  👁
+                </button>
+              </div>
+              <div id="discordValidation" class="validation-msg"></div>
+            </div>
+            <details class="help-panel">
+              <summary>📖 How to create a Discord Bot</summary>
+              <div class="help-content">
+                <ol>
+                  <li>
+                    Go to
+                    <a
+                      href="https://discord.com/developers/applications"
+                      target="_blank"
+                      >Developer Portal</a
+                    >
+                    → New Application
+                  </li>
+                  <li>
+                    Go to <strong>Bot</strong> → <strong>Add Bot</strong> → Copy
+                    Token
+                  </li>
+                  <li>
+                    <strong>Enable MESSAGE CONTENT INTENT</strong> (see above!)
+                  </li>
+                  <li>
+                    Go to <strong>OAuth2 → URL Generator</strong>, select
+                    <code>bot</code> scope
+                  </li>
+                  <li>Add permissions: Send Messages, Read Messages</li>
+                  <li>Copy the URL and open it to invite the bot</li>
+                </ol>
+                <a
+                  href="https://discord.com/developers/docs/getting-started"
+                  target="_blank"
+                  class="help-link"
+                  >Official Docs ↗</a
+                >
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <!-- Slack -->
+        <div class="channel-panel" data-channel="slack">
+          <div class="channel-enable">
+            <label class="toggle-label">
+              <input type="checkbox" id="enableSlack" />
+              <span>Enable Slack</span>
+            </label>
+          </div>
+          <div class="channel-fields" id="slackFields" style="display: none">
+            <div class="input-group">
+              <label>Bot Token</label>
+              <div class="password-input">
+                <input
+                  id="slackBotToken"
+                  type="password"
+                  placeholder="xoxb-..."
+                />
+                <button
+                  type="button"
+                  class="toggle-vis"
+                  data-target="slackBotToken"
+                >
+                  👁
+                </button>
+              </div>
+            </div>
+            <div class="input-group">
+              <label>App Token</label>
+              <div class="password-input">
+                <input
+                  id="slackAppToken"
+                  type="password"
+                  placeholder="xapp-..."
+                />
+                <button
+                  type="button"
+                  class="toggle-vis"
+                  data-target="slackAppToken"
+                >
+                  👁
+                </button>
+              </div>
+            </div>
+            <details class="help-panel">
+              <summary>📖 How to set up Slack</summary>
+              <div class="help-content">
+                <p><strong>Slack needs two tokens:</strong></p>
+                <ul>
+                  <li>
+                    <strong>Bot Token</strong> (<code>xoxb-...</code>) — for
+                    messaging
+                  </li>
+                  <li>
+                    <strong>App Token</strong> (<code>xapp-...</code>) — for
+                    Socket Mode
+                  </li>
+                </ul>
+                <ol>
+                  <li>
+                    <a href="https://api.slack.com/apps" target="_blank"
+                      >Create an app</a
+                    >
+                    → From scratch
+                  </li>
+                  <li>
+                    Enable <strong>Socket Mode</strong> → generate App Token
+                  </li>
+                  <li>
+                    Add OAuth scopes: <code>chat:write</code>,
+                    <code>app_mentions:read</code>, <code>im:history</code>
+                  </li>
+                  <li>Install to workspace → copy Bot Token</li>
+                </ol>
+                <a
+                  href="https://api.slack.com/start/building"
+                  target="_blank"
+                  class="help-link"
+                  >Slack Docs ↗</a
+                >
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <div class="step-nav">
+          <button class="back-btn" id="step2Back">← Back</button>
+          <button class="next-btn" id="step2Next">Next: Networking →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== STEP 3: NETWORKING ========== -->
+    <div class="wizard-step" data-step="3" id="step3">
+      <div class="card">
+        <div class="step-header">
+          <h2>🌐 Networking</h2>
+          <p class="muted">
+            Set up private networking with Tailscale. Optional — skip if you
+            only need public access.
+          </p>
+        </div>
+
+        <div class="channel-enable">
+          <label class="toggle-label">
+            <input type="checkbox" id="enableTailscale" />
+            <span>Enable Tailscale (private networking)</span>
+          </label>
+        </div>
+
+        <div id="tailscaleFields" style="display: none">
+          <div class="info-box">
+            <strong>🔒 What is Tailscale?</strong>
+            <p>
+              Creates a private VPN between your devices. Access OpenClaw
+              without exposing it publicly. Great for connecting to local LLMs
+              (Ollama, vLLM).
+            </p>
+          </div>
+
+          <div class="input-group">
+            <label>Auth Key</label>
+            <div class="password-input">
+              <input
+                id="tailscaleAuthKey"
+                type="password"
+                placeholder="tskey-auth-..."
+              />
+              <button
+                type="button"
+                class="toggle-vis"
+                data-target="tailscaleAuthKey"
+              >
+                👁
+              </button>
+            </div>
+            <div id="tailscaleValidation" class="validation-msg"></div>
+          </div>
+
+          <div class="input-group">
+            <label>Hostname</label>
+            <input
+              id="tailscaleHostname"
+              type="text"
+              placeholder="openclaw-railway"
+              value="openclaw-railway"
+            />
+            <div class="muted hint-text">
+              Name of this machine on your Tailscale network
+            </div>
+          </div>
+
+          <details class="help-panel">
+            <summary>📖 How to get a Tailscale Auth Key</summary>
+            <div class="help-content">
+              <ol>
+                <li>
+                  Go to
+                  <a
+                    href="https://login.tailscale.com/admin/settings/keys"
+                    target="_blank"
+                    >Tailscale Admin → Keys</a
+                  >
+                </li>
+                <li>Click <strong>Generate auth key</strong></li>
+                <li>
+                  Check <strong>Reusable</strong> (recommended for Railway
+                  redeploys)
+                </li>
+                <li>Copy the key (<code>tskey-auth-...</code>)</li>
+              </ol>
+              <a
+                href="https://tailscale.com/kb/1085/auth-keys"
+                target="_blank"
+                class="help-link"
+                >Tailscale Docs ↗</a
+              >
+            </div>
+          </details>
+
+          <div
+            id="tailscaleStatus"
+            class="tailscale-status"
+            style="display: none"
+          ></div>
+        </div>
+
+        <div class="step-nav">
+          <button class="back-btn" id="step3Back">← Back</button>
+          <button class="next-btn" id="step3Next">Next: Advanced →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== STEP 4: ADVANCED ========== -->
+    <div class="wizard-step" data-step="4" id="step4">
+      <div class="card">
+        <div class="step-header">
+          <h2>⚙️ Advanced Settings</h2>
+          <p class="muted">Custom providers and setup flow. Skip if unsure.</p>
+        </div>
+
+        <label>Setup flow</label>
+        <select id="flow">
+          <option value="quickstart">quickstart — fastest setup</option>
+          <option value="advanced">advanced — more options</option>
+          <option value="manual">manual — full control</option>
+        </select>
+
+        <details class="collapsible-section">
+          <summary class="section-toggle">
+            ➕ Add Custom OpenAI-Compatible Provider
+          </summary>
+          <div class="section-content">
+            <p class="muted">Add a local LLM or custom API endpoint.</p>
+
+            <label>Quick Template</label>
+            <select id="customProviderTemplate">
+              <option value="">
+                — Choose template or configure manually —
+              </option>
+              <option value="ollama">Ollama (local)</option>
+              <option value="vllm">vLLM (high-performance)</option>
+              <option value="lmstudio">LM Studio (desktop)</option>
+              <option value="litellm">LiteLLM (proxy)</option>
+              <option value="custom">Custom</option>
+            </select>
+
+            <div class="input-group">
+              <label>Provider ID</label>
+              <input
+                id="customProviderId"
+                type="text"
+                placeholder="my-custom-provider"
+              />
+            </div>
+            <div class="input-group">
+              <label>Base URL</label>
+              <input
+                id="customProviderBaseUrl"
+                type="text"
+                placeholder="http://localhost:11434/v1"
+              />
+            </div>
+            <div class="input-group">
+              <label>API Type</label>
+              <select id="customProviderApi">
+                <option value="">— Select —</option>
+                <option value="openai-completions">openai-completions</option>
+                <option value="openai-responses">openai-responses</option>
+              </select>
+            </div>
+            <div class="input-group">
+              <label>API Key Env Var (optional)</label>
+              <input
+                id="customProviderApiKeyEnv"
+                type="text"
+                placeholder="MY_PROVIDER_API_KEY"
+              />
+            </div>
+            <div class="input-group">
+              <label>Model ID (optional)</label>
+              <input
+                id="customProviderModelId"
+                type="text"
+                placeholder="llama3.2"
+              />
+            </div>
+          </div>
+        </details>
+
+        <div class="step-nav">
+          <button class="back-btn" id="step4Back">← Back</button>
+          <button class="next-btn" id="step4Next">Review & Deploy →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== STEP 5: REVIEW & DEPLOY ========== -->
+    <div class="wizard-step" data-step="5" id="step5">
+      <div class="card">
+        <div class="step-header">
+          <h2>🚀 Review & Deploy</h2>
+          <p class="muted">Review your configuration before running setup.</p>
+        </div>
+
+        <div class="review-summary" id="reviewSummary"></div>
+
+        <div class="deploy-actions">
+          <button id="run" class="deploy-btn">🚀 Run Setup</button>
+          <button id="reset" class="btn-sm tertiary-button">
+            🗑 Reset Setup
+          </button>
+        </div>
+
+        <div
+          id="onboardProgress"
+          class="onboard-progress"
+          style="display: none"
+        >
+          <div class="progress-item" data-progress="onboard">
+            <span class="progress-icon">⏸</span> Running onboard command
+          </div>
+          <div class="progress-item" data-progress="token">
+            <span class="progress-icon">⏸</span> Syncing gateway token
+          </div>
+          <div class="progress-item" data-progress="channels">
+            <span class="progress-icon">⏸</span> Configuring channels
+          </div>
+          <div class="progress-item" data-progress="tailscale">
+            <span class="progress-icon">⏸</span> Setting up Tailscale
+          </div>
+          <div class="progress-item" data-progress="gateway">
+            <span class="progress-icon">⏸</span> Starting gateway
+          </div>
+          <div class="progress-item" data-progress="health">
+            <span class="progress-icon">⏸</span> Verifying health
+          </div>
+        </div>
+
+        <pre id="log" style="display: none"></pre>
+
+        <div class="step-nav">
+          <button class="back-btn" id="step5Back">← Back</button>
+          <div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== ADMIN TOOLS ========== -->
+    <div class="admin-section" id="adminSection">
+      <h2 class="section-title">🛠 Admin Tools</h2>
+
+      <details class="card admin-card">
+        <summary class="admin-toggle"><span>🔧 Debug Console</span></summary>
+        <div class="admin-content">
+          <p class="muted">Run allowlisted OpenClaw commands.</p>
+          <div class="console-layout">
+            <div class="console-input-area">
+              <select id="consoleCommand">
+                <option value="">— Select command —</option>
+                <optgroup label="Gateway">
+                  <option value="gateway.restart">gateway.restart</option>
+                  <option value="gateway.stop">gateway.stop</option>
+                  <option value="gateway.start">gateway.start</option>
+                </optgroup>
+                <optgroup label="Status">
+                  <option value="openclaw.version">openclaw.version</option>
+                  <option value="openclaw.status">openclaw.status</option>
+                  <option value="openclaw.health">openclaw.health</option>
+                  <option value="openclaw.doctor">openclaw.doctor</option>
+                </optgroup>
+                <optgroup label="Logs & Config">
+                  <option value="openclaw.logs.tail">
+                    openclaw.logs.tail (arg: count)
+                  </option>
+                  <option value="openclaw.config.get">
+                    openclaw.config.get (arg: path)
+                  </option>
+                </optgroup>
+                <optgroup label="Devices">
+                  <option value="openclaw.devices.list">
+                    openclaw.devices.list
+                  </option>
+                  <option value="openclaw.devices.approve">
+                    openclaw.devices.approve (arg: id)
+                  </option>
+                </optgroup>
+                <optgroup label="Plugins">
+                  <option value="openclaw.plugins.list">
+                    openclaw.plugins.list
+                  </option>
+                  <option value="openclaw.plugins.enable">
+                    openclaw.plugins.enable (arg: name)
+                  </option>
+                </optgroup>
+              </select>
+              <input
+                id="consoleArg"
+                type="text"
+                placeholder="Argument (if needed)"
+              />
+              <button id="consoleRun" class="btn-sm">▶ Run</button>
+            </div>
+            <div class="console-output-area">
+              <div class="console-output-header">
+                <span class="muted">Output</span>
+                <button id="consoleCopy" class="btn-xs secondary-button">
+                  📋 Copy
+                </button>
+              </div>
+              <pre id="consoleOutput"></pre>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <details class="card admin-card">
+        <summary class="admin-toggle"><span>✏️ Config Editor</span></summary>
+        <div class="admin-content">
+          <p class="muted">
+            Edit <code id="configPath">openclaw.json</code>. Auto-backup before
+            save.
+          </p>
+          <textarea
+            id="configContent"
+            class="config-editor"
+            placeholder="Loading..."
+          ></textarea>
+          <div class="config-actions">
+            <button id="configReload" class="btn-sm secondary-button">
+              ↻ Reload
+            </button>
+            <button id="configSave" class="btn-sm">💾 Save & Restart</button>
+          </div>
+          <pre id="configOutput"></pre>
+        </div>
+      </details>
+
+      <details class="card admin-card">
+        <summary class="admin-toggle"><span>🔐 Device Pairing</span></summary>
+        <div class="admin-content">
+          <p class="muted">Approve pending device requests.</p>
+          <div class="pairing-row">
+            <select id="pairingChannel">
+              <option value="telegram">Telegram</option>
+              <option value="discord">Discord</option>
+            </select>
+            <input id="pairingCode" type="text" placeholder="Pairing code" />
+            <button id="pairingApprove" class="btn-sm">✓ Approve</button>
+          </div>
+          <button
+            id="devicesRefresh"
+            class="btn-sm secondary-button"
+            style="margin-top: 0.5rem"
+          >
+            ↻ Refresh devices
+          </button>
+          <div id="devicesList"></div>
+        </div>
+      </details>
+
+      <details class="card admin-card">
+        <summary class="admin-toggle"><span>💾 Import/Export</span></summary>
+        <div class="admin-content">
+          <div class="backup-row">
+            <div>
+              <p class="muted">Export config + workspace.</p>
+              <a
+                href="/setup/export"
+                target="_blank"
+                class="btn-sm secondary-button"
+                >⬇ Download Backup</a
+              >
+            </div>
+            <div>
+              <p class="muted">Restore from backup.</p>
+              <input
+                id="importFile"
+                type="file"
+                accept=".tar.gz,.tgz,application/gzip"
+              /><button id="importButton" class="btn-sm">⬆ Import</button>
+            </div>
+          </div>
+          <pre id="importOutput"></pre>
+        </div>
+      </details>
+    </div>
+
+    <footer class="app-footer">
+      <div class="footer-content">
+        <div class="footer-links">
+          <a
+            href="https://github.com/duc-nguyen-1223/openclaw-railway-template/issues/new"
+            target="_blank"
+            >📝 Report Issue</a
+          >
+          <a href="https://discord.gg/openclaw" target="_blank">💬 Discord</a>
+          <a
+            href="https://github.com/duc-nguyen-1223/openclaw-railway-template#readme"
+            target="_blank"
+            >📚 Docs</a
+          >
+        </div>
+        <p class="muted">
+          openclaw-railway-template | Powered by
+          <a href="https://github.com/openclaw/openclaw" target="_blank"
+            >OpenClaw</a
+          >
+        </p>
+      </div>
+    </footer>
+
+    <script src="/setup/app.js"></script>
+  </body>
 </html>
