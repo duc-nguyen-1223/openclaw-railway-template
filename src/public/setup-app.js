@@ -448,7 +448,10 @@
   }
 
   // ========== SUCCESS CARD ==========
-  // After setup completes, show the gateway token and clear next-step instructions.
+  // After setup completes, show the gateway token and an inline device approval panel.
+  // The cookie is auto-set so the user can open the Control UI immediately.
+  // When they click "Connect" in the Control UI, a device pairing request appears here
+  // for the admin to approve with one click — no page switching required.
   function showSuccessCard(gatewayToken) {
     // Remove any previously rendered success card
     const existing = document.getElementById("successCard");
@@ -461,18 +464,20 @@
 
     const tokenDisplay = gatewayToken
       ? `
-      <div style="margin-top:1rem">
-        <label style="display:block;font-size:.75rem;color:var(--text-muted,#94a3b8);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:.35rem">
-          Gateway Token <span style="font-weight:400;text-transform:none">(save this!)</span>
-        </label>
-        <div style="display:flex;gap:.5rem;align-items:center">
-          <code id="successTokenValue" style="flex:1;padding:.5rem .75rem;background:var(--bg,#0d1321);border:1px solid var(--border,#1e293b);border-radius:.375rem;font-size:.82rem;word-break:break-all;color:var(--text,#e2e8f0);cursor:pointer" title="Click to copy">${gatewayToken}</code>
-          <button id="copyTokenBtn" style="padding:.45rem .75rem;background:var(--accent,#6366f1);color:white;border:none;border-radius:.375rem;cursor:pointer;font-size:.8rem;white-space:nowrap" title="Copy token">📋 Copy</button>
+      <details style="margin-top:1rem">
+        <summary style="font-size:.8rem;color:var(--text-muted,#94a3b8);cursor:pointer;user-select:none">
+          🔑 Gateway Token <span style="font-weight:400">(saved in browser — click to reveal for other devices)</span>
+        </summary>
+        <div style="margin-top:.5rem">
+          <div style="display:flex;gap:.5rem;align-items:center">
+            <code id="successTokenValue" style="flex:1;padding:.5rem .75rem;background:var(--bg,#0d1321);border:1px solid var(--border,#1e293b);border-radius:.375rem;font-size:.82rem;word-break:break-all;color:var(--text,#e2e8f0);cursor:pointer" title="Click to copy">${gatewayToken}</code>
+            <button id="copyTokenBtn" style="padding:.45rem .75rem;background:var(--accent,#6366f1);color:white;border:none;border-radius:.375rem;cursor:pointer;font-size:.8rem;white-space:nowrap" title="Copy token">📋 Copy</button>
+          </div>
+          <p style="font-size:.75rem;color:var(--text-muted,#94a3b8);margin-top:.4rem">
+            You'll need this token to access the Control UI from other browsers/devices.
+          </p>
         </div>
-        <p style="font-size:.75rem;color:var(--text-muted,#94a3b8);margin-top:.4rem">
-          You'll need this token to access the Control UI from new browsers. It's been auto-saved in your current browser.
-        </p>
-      </div>`
+      </details>`
       : "";
 
     const hasTelegram = $("#enableTelegram")?.checked;
@@ -482,22 +487,41 @@
     const channelHint = hasChannels
       ? `
       <div style="margin-top:1rem;padding:.75rem 1rem;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2);border-radius:.5rem">
-        <p style="font-size:.85rem;font-weight:600;margin-bottom:.35rem;color:var(--text,#e2e8f0)">📱 Channel Pairing (next step)</p>
+        <p style="font-size:.85rem;font-weight:600;margin-bottom:.35rem;color:var(--text,#e2e8f0)">📱 Channel Pairing</p>
         <p style="font-size:.8rem;color:var(--text-muted,#94a3b8);line-height:1.5">
           ${hasTelegram ? "Send any message to your Telegram bot. " : ""}${hasDiscord ? "DM your Discord bot. " : ""}
-          The bot will reply with a <strong>pairing code</strong>. Come back here → scroll to <strong>🔐 Device Pairing</strong> below → paste the code → click Approve.
+          The bot will reply with a <strong>pairing code</strong>. Paste it below in <strong>🔐 Channel Pairing</strong> → click Approve.
         </p>
       </div>`
       : "";
 
     card.innerHTML = `
-      <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem">
+      <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.75rem">
         <span style="font-size:1.5rem">🎉</span>
         <h3 style="font-size:1.1rem;font-weight:700;color:var(--text,#e2e8f0)">Setup Complete!</h3>
       </div>
-      <p style="font-size:.85rem;color:var(--text-muted,#94a3b8);line-height:1.5">
-        Your OpenClaw gateway is running. Click the button above to open the Control UI.
+      <p style="font-size:.85rem;color:var(--text-muted,#94a3b8);line-height:1.5;margin-bottom:1rem">
+        Your OpenClaw gateway is running. Click below to open the Control UI, then click <strong>Connect</strong>. Come back here to approve the device.
       </p>
+      <a href="/openclaw" target="_blank" style="display:inline-flex;align-items:center;gap:.4rem;padding:.65rem 1.25rem;background:var(--accent,#6366f1);color:white;text-decoration:none;border-radius:.5rem;font-size:.95rem;font-weight:600;transition:background .2s" onmouseover="this.style.background='#818cf8'" onmouseout="this.style.background='var(--accent,#6366f1)'">
+        🦞 Open Control UI →
+      </a>
+      <p style="font-size:.75rem;color:var(--text-muted,#94a3b8);margin-top:.5rem">
+        ✅ Token auto-saved in browser
+      </p>
+
+      <div id="deviceApprovalPanel" style="margin-top:1.25rem;padding:1rem;background:rgba(234,179,8,.06);border:1px solid rgba(234,179,8,.2);border-radius:.5rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem">
+          <p style="font-size:.85rem;font-weight:600;color:var(--text,#e2e8f0)">📱 Pending Device Approvals</p>
+          <span id="devicePollIndicator" style="font-size:.7rem;color:var(--text-muted,#94a3b8)">checking...</span>
+        </div>
+        <p style="font-size:.8rem;color:var(--text-muted,#94a3b8);line-height:1.5;margin-bottom:.75rem">
+          After clicking <strong>Connect</strong> in the Control UI, the device will appear here for approval.
+        </p>
+        <div id="pendingDevicesList"></div>
+        <p id="noDevicesMsg" style="font-size:.8rem;color:var(--text-muted,#64748b);font-style:italic;display:none">No pending devices — waiting for connection...</p>
+      </div>
+
       ${tokenDisplay}
       ${channelHint}
     `;
@@ -533,7 +557,149 @@
         if (tokenCode) tokenCode.addEventListener("click", doCopy);
       }
     }
+
+    // Start polling for pending device approvals
+    startDeviceApprovalPolling();
   }
+
+  // ========== DEVICE APPROVAL POLLING ==========
+  // Polls /setup/api/devices/pending every 3 seconds and renders approve buttons.
+  // Stops automatically when the user navigates away or the card is removed.
+  let devicePollTimer = null;
+  let approvedDevices = new Set();
+
+  function startDeviceApprovalPolling() {
+    // Clear any existing poller
+    if (devicePollTimer) clearInterval(devicePollTimer);
+
+    async function pollDevices() {
+      const indicator = document.getElementById("devicePollIndicator");
+      const listEl = document.getElementById("pendingDevicesList");
+      const noDevicesMsg = document.getElementById("noDevicesMsg");
+
+      // Stop polling if the panel was removed (e.g., user reset setup)
+      if (!listEl) {
+        clearInterval(devicePollTimer);
+        devicePollTimer = null;
+        return;
+      }
+
+      try {
+        const res = await fetch("/setup/api/devices/pending");
+        if (!res.ok) {
+          if (indicator) indicator.textContent = "⚠️ error";
+          return;
+        }
+        const data = await res.json();
+        if (indicator) indicator.textContent = "● live";
+        if (indicator) indicator.style.color = "#22c55e";
+
+        // Filter out already-approved devices
+        const pending = (data.requestIds || []).filter(
+          (id) => !approvedDevices.has(id),
+        );
+
+        if (pending.length === 0) {
+          listEl.innerHTML = "";
+          if (noDevicesMsg) noDevicesMsg.style.display = "block";
+          return;
+        }
+
+        if (noDevicesMsg) noDevicesMsg.style.display = "none";
+
+        // Render each pending device with an approve button
+        listEl.innerHTML = pending
+          .map(
+            (id) => `
+          <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem;padding:.5rem .75rem;background:rgba(234,179,8,.08);border:1px solid rgba(234,179,8,.15);border-radius:.375rem" data-device-id="${id}">
+            <span style="font-size:1.1rem">🔗</span>
+            <code style="flex:1;font-size:.82rem;color:var(--text,#e2e8f0);word-break:break-all">${id}</code>
+            <button onclick="window.__approveDevice('${id}', this)" style="padding:.35rem .75rem;background:#22c55e;color:white;border:none;border-radius:.375rem;cursor:pointer;font-size:.8rem;font-weight:600;white-space:nowrap;transition:background .2s" onmouseover="this.style.background='#16a34a'" onmouseout="this.style.background='#22c55e'">
+              ✅ Approve
+            </button>
+          </div>
+        `,
+          )
+          .join("");
+      } catch (err) {
+        if (indicator) indicator.textContent = "⚠️ offline";
+        if (indicator) indicator.style.color = "#ef4444";
+      }
+    }
+
+    // Poll immediately, then every 3 seconds
+    pollDevices();
+    devicePollTimer = setInterval(pollDevices, 3000);
+  }
+
+  // Global approve handler (accessible from inline onclick)
+  window.__approveDevice = async function (requestId, btn) {
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "⏳ Approving...";
+    }
+
+    try {
+      const res = await fetch("/setup/api/devices/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId }),
+      });
+
+      const data = await res.json();
+
+      if (data.ok) {
+        approvedDevices.add(requestId);
+        toast(`✅ Device ${requestId} approved!`, "success", 4000);
+
+        // Update the button to show success
+        if (btn) {
+          const row = btn.closest("[data-device-id]");
+          if (row) {
+            row.style.background = "rgba(34,197,94,.1)";
+            row.style.borderColor = "rgba(34,197,94,.3)";
+            btn.textContent = "✅ Approved";
+            btn.style.background = "#166534";
+            btn.style.cursor = "default";
+          }
+        }
+
+        // Remove from list after a moment
+        setTimeout(() => {
+          const row = document.querySelector(`[data-device-id="${requestId}"]`);
+          if (row) row.remove();
+          // Show "no devices" if list is empty
+          const listEl = document.getElementById("pendingDevicesList");
+          if (listEl && listEl.children.length === 0) {
+            const noDevicesMsg = document.getElementById("noDevicesMsg");
+            if (noDevicesMsg) {
+              noDevicesMsg.textContent =
+                "✅ All devices approved — you're connected!";
+              noDevicesMsg.style.display = "block";
+              noDevicesMsg.style.color = "#22c55e";
+              noDevicesMsg.style.fontStyle = "normal";
+            }
+          }
+        }, 2000);
+      } else {
+        toast(
+          `Failed to approve device: ${data.output || data.error}`,
+          "error",
+          6000,
+        );
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "✅ Approve";
+        }
+      }
+    } catch (err) {
+      toast(`Error: ${err.message}`, "error", 6000);
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "✅ Approve";
+      }
+    }
+  };
 
   // ========== RUN SETUP ==========
   async function runSetup() {
@@ -636,7 +802,7 @@
         // Show success card with gateway token and next steps
         showSuccessCard(data.gatewayToken);
 
-        runBtn.textContent = "✅ Done! Open UI →";
+        runBtn.textContent = "🦞 Open Control UI →";
         runBtn.classList.remove("running");
         runBtn.classList.add("success");
         runBtn.disabled = false;

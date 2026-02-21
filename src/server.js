@@ -129,6 +129,10 @@ function setStartupState(state, reason = "") {
   currentStartupState = state;
   startupStateReason = reason;
   console.log(`[startup-state] → ${state}${reason ? `: ${reason}` : ""}`);
+
+  // Note: Device pairing approval is handled via the setup wizard UI
+  // (see /setup/api/devices/pending and /setup/api/devices/approve endpoints)
+  // rather than an auto-approver, to prevent unauthorized device pairing.
 }
 
 // Where the gateway will listen internally (we proxy to it).
@@ -365,8 +369,9 @@ function sleep(ms) {
 // - Gateway is bound to loopback (127.0.0.1) — unreachable from outside
 // - Token auth protects all gateway access
 // - The wrapper handles external auth (Basic for /setup, Bearer injection for /openclaw)
-// - Device pairing is disabled because it's redundant on top of token auth
-//   and causes "1008: pairing required" errors for the Control UI
+// - The wrapper's cookie-based token gate + Bearer injection means the gateway
+//   doesn't need its own device pairing — it's redundant on loopback + token auth
+// - Device pairing is approved manually via the setup wizard's "Pending Devices" panel
 // - Channel pairings (Telegram/Discord) are separate and always require manual approval
 function enforceGatewayConfig() {
   const cfgPath = configPath();
@@ -380,16 +385,14 @@ function enforceGatewayConfig() {
     // Ensure gateway section exists
     if (!config.gateway) config.gateway = {};
 
-    // Disable device pairing requirement for loopback connections
-    // This prevents "1008: pairing required" for the Control UI WebSocket
-    // Security: gateway is loopback-only + token-authed, so device pairing is redundant
-    if (!config.gateway.devices) config.gateway.devices = {};
-    if (config.gateway.devices.pairingRequired !== false) {
-      config.gateway.devices.pairingRequired = false;
+    // Remove gateway.devices if present — OpenClaw doesn't recognize this key
+    // and will reject the entire config with "Unrecognized key: devices".
+    // Previous versions of this wrapper incorrectly set gateway.devices.pairingRequired.
+    // Device pairing is approved manually via the setup wizard's "Pending Devices" panel.
+    if (config.gateway.devices !== undefined) {
+      delete config.gateway.devices;
       changed = true;
-      console.log(
-        "[gateway-config] Set gateway.devices.pairingRequired = false",
-      );
+      console.log("[gateway-config] Removed unsupported gateway.devices key");
     }
 
     // Remove allowInsecureAuth if it was set by older versions — we use proper config now
@@ -523,8 +526,8 @@ async function startGateway() {
   console.log(`[gateway] ========== TOKEN SYNC COMPLETE ==========`);
 
   // Enforce security config before every gateway start
-  // This disables device pairing (redundant on loopback + token auth)
-  // and removes any legacy allowInsecureAuth settings
+  // This removes any invalid/unsupported config keys (e.g., gateway.devices)
+  // and cleans up legacy allowInsecureAuth settings
   enforceGatewayConfig();
 
   const args = [
@@ -1263,18 +1266,9 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
           String(INTERNAL_GATEWAY_PORT),
         ]),
       );
-      // Disable device pairing requirement (gateway is loopback-only + token-authed, pairing is redundant)
-      // This is enforced on every gateway start via enforceGatewayConfig(), but also set during onboard
-      await runCmd(
-        OPENCLAW_NODE,
-        clawArgs([
-          "config",
-          "set",
-          "--json",
-          "gateway.devices.pairingRequired",
-          "false",
-        ]),
-      );
+      // Note: We do NOT set gateway.devices.pairingRequired here — OpenClaw doesn't
+      // recognize that key and will reject the entire config. Device pairing is approved
+      // manually via the setup wizard's "Pending Devices" panel.
 
       // Configure trusted proxies for gateway (based on PR #12 by ArtificialSight)
       // - Auto-detects Railway environment via env vars
@@ -2644,6 +2638,11 @@ proxy.on("proxyReqWs", (proxyReq, req, socket, options, head) => {
 // The wrapper requires users to prove they know the gateway token before proxying to the Control UI.
 // This prevents unauthorized access even if the deployment URL is discovered.
 app.get("/openclaw/token", (_req, res) => {
+  // If user already has a valid token cookie (e.g., auto-set by setup wizard), redirect straight to UI
+  if (hasValidGatewayToken(_req)) {
+    return res.redirect("/openclaw");
+  }
+
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2899,6 +2898,12 @@ process.on("SIGTERM", async () => {
   server.close(() => {
     console.log("[shutdown] HTTP server closed");
   });
+
+  // Stop background pollers
+  if (healthMonitorInterval) {
+    clearInterval(healthMonitorInterval);
+    healthMonitorInterval = null;
+  }
 
   // Stop gateway process
   if (gatewayProc) {
