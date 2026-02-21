@@ -695,6 +695,42 @@
         </div>
       </details>
 
+      <details class="card admin-card" id="deviceApprovalsCard">
+        <summary class="admin-toggle"><span>📱 Device Approvals</span></summary>
+        <div class="admin-content">
+          <p class="muted" style="margin-bottom: 0.75rem">
+            When you click <strong>Connect</strong> in the
+            <a href="/openclaw" target="_blank">Control UI</a>, a device pairing
+            request appears here. Approve it to start your session.
+          </p>
+          <div
+            style="
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              margin-bottom: 0.5rem;
+            "
+          >
+            <span
+              id="devicePollIndicator"
+              style="font-size: 0.75rem; color: var(--text-muted)"
+              >⏸ paused</span
+            >
+            <button id="devicePollToggle" class="btn-sm secondary-button">
+              ▶ Start polling
+            </button>
+          </div>
+          <div id="pendingDevicesList"></div>
+          <p
+            id="noDevicesMsg"
+            class="muted"
+            style="font-style: italic; display: none"
+          >
+            No pending devices — waiting for connection...
+          </p>
+        </div>
+      </details>
+
       <details class="card admin-card">
         <summary class="admin-toggle"><span>🔧 Debug Console</span></summary>
         <div class="admin-content">

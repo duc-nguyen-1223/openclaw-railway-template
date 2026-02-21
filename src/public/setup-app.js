@@ -448,10 +448,9 @@
   }
 
   // ========== SUCCESS CARD ==========
-  // After setup completes, show the gateway token and an inline device approval panel.
+  // After setup completes, show the gateway token and next-step instructions.
   // The cookie is auto-set so the user can open the Control UI immediately.
-  // When they click "Connect" in the Control UI, a device pairing request appears here
-  // for the admin to approve with one click — no page switching required.
+  // Device approval is handled in the separate "📱 Device Approvals" admin section.
   function showSuccessCard(gatewayToken) {
     // Remove any previously rendered success card
     const existing = document.getElementById("successCard");
@@ -501,7 +500,8 @@
         <h3 style="font-size:1.1rem;font-weight:700;color:var(--text,#e2e8f0)">Setup Complete!</h3>
       </div>
       <p style="font-size:.85rem;color:var(--text-muted,#94a3b8);line-height:1.5;margin-bottom:1rem">
-        Your OpenClaw gateway is running. Click below to open the Control UI, then click <strong>Connect</strong>. Come back here to approve the device.
+        Your OpenClaw gateway is running. Click below to open the Control UI, then click <strong>Connect</strong>.
+        Approve the device in <strong>📱 Device Approvals</strong> below.
       </p>
       <a href="/openclaw" target="_blank" style="display:inline-flex;align-items:center;gap:.4rem;padding:.65rem 1.25rem;background:var(--accent,#6366f1);color:white;text-decoration:none;border-radius:.5rem;font-size:.95rem;font-weight:600;transition:background .2s" onmouseover="this.style.background='#818cf8'" onmouseout="this.style.background='var(--accent,#6366f1)'">
         🦞 Open Control UI →
@@ -509,19 +509,6 @@
       <p style="font-size:.75rem;color:var(--text-muted,#94a3b8);margin-top:.5rem">
         ✅ Token auto-saved in browser
       </p>
-
-      <div id="deviceApprovalPanel" style="margin-top:1.25rem;padding:1rem;background:rgba(234,179,8,.06);border:1px solid rgba(234,179,8,.2);border-radius:.5rem">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem">
-          <p style="font-size:.85rem;font-weight:600;color:var(--text,#e2e8f0)">📱 Pending Device Approvals</p>
-          <span id="devicePollIndicator" style="font-size:.7rem;color:var(--text-muted,#94a3b8)">checking...</span>
-        </div>
-        <p style="font-size:.8rem;color:var(--text-muted,#94a3b8);line-height:1.5;margin-bottom:.75rem">
-          After clicking <strong>Connect</strong> in the Control UI, the device will appear here for approval.
-        </p>
-        <div id="pendingDevicesList"></div>
-        <p id="noDevicesMsg" style="font-size:.8rem;color:var(--text-muted,#64748b);font-style:italic;display:none">No pending devices — waiting for connection...</p>
-      </div>
-
       ${tokenDisplay}
       ${channelHint}
     `;
@@ -558,15 +545,40 @@
       }
     }
 
-    // Start polling for pending device approvals
-    startDeviceApprovalPolling();
+    // Auto-open the Device Approvals section and start polling
+    const deviceCard = document.getElementById("deviceApprovalsCard");
+    if (deviceCard) {
+      deviceCard.open = true;
+      startDeviceApprovalPolling();
+    }
   }
 
-  // ========== DEVICE APPROVAL POLLING ==========
-  // Polls /setup/api/devices/pending every 3 seconds and renders approve buttons.
-  // Stops automatically when the user navigates away or the card is removed.
+  // ========== DEVICE APPROVAL SECTION ==========
+  // Standalone admin section that polls /setup/api/devices/pending every 3 seconds
+  // and renders approve buttons. Can be started/stopped via the toggle button.
   let devicePollTimer = null;
   let approvedDevices = new Set();
+
+  function initDeviceApprovals() {
+    const card = document.getElementById("deviceApprovalsCard");
+    const toggleBtn = document.getElementById("devicePollToggle");
+    if (!card || !toggleBtn) return;
+
+    toggleBtn.addEventListener("click", () => {
+      if (devicePollTimer) {
+        stopDeviceApprovalPolling();
+      } else {
+        startDeviceApprovalPolling();
+      }
+    });
+
+    // Auto-start polling when the section is opened (if not already polling)
+    card.addEventListener("toggle", () => {
+      if (card.open && !devicePollTimer) {
+        startDeviceApprovalPolling();
+      }
+    });
+  }
 
   function startDeviceApprovalPolling() {
     // Clear any existing poller
@@ -630,6 +642,24 @@
     // Poll immediately, then every 3 seconds
     pollDevices();
     devicePollTimer = setInterval(pollDevices, 3000);
+
+    // Update toggle button
+    const toggleBtn = document.getElementById("devicePollToggle");
+    if (toggleBtn) toggleBtn.textContent = "⏸ Stop polling";
+  }
+
+  function stopDeviceApprovalPolling() {
+    if (devicePollTimer) {
+      clearInterval(devicePollTimer);
+      devicePollTimer = null;
+    }
+    const indicator = document.getElementById("devicePollIndicator");
+    if (indicator) {
+      indicator.textContent = "⏸ paused";
+      indicator.style.color = "var(--text-muted, #94a3b8)";
+    }
+    const toggleBtn = document.getElementById("devicePollToggle");
+    if (toggleBtn) toggleBtn.textContent = "▶ Start polling";
   }
 
   // Global approve handler (accessible from inline onclick)
@@ -1349,6 +1379,7 @@
     initConsole();
     initConfigEditor();
     initPairing();
+    initDeviceApprovals();
     initImport();
     initDashboardActions();
     initReset();

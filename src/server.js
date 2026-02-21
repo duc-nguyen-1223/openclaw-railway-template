@@ -1564,14 +1564,25 @@ function redactSecrets(text) {
 
 // ========== DEBUG CONSOLE: HELPER FUNCTIONS & ALLOWLIST ==========
 
-// Extract device requestIds from device list output for validation
+// Extract device requestIds from device list output.
+// The output is a CLI table with columns: Request | Device | Role | IP | Age | Flags
+// UUIDs appear in the "Request" column (first data column) in rows delimited by │.
+// We also handle continuation rows (where the Request cell is empty but Device continues).
 function extractDeviceRequestIds(output) {
   const ids = [];
   const lines = (output || "").split("\n");
-  // Look for lines with requestId format: alphanumeric, underscore, dash
+  // Match UUID pattern (8-4-4-4-12 hex) that appears in table rows
+  const uuidPattern =
+    /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
   for (const line of lines) {
-    const match = line.match(/requestId[:\s]+([A-Za-z0-9_-]+)/i);
-    if (match) ids.push(match[1]);
+    // Only look at table data rows (contain │ delimiters, not header/border rows)
+    if (!line.includes("│")) continue;
+    // Split by │ and check the first data cell (index 1, since index 0 is before first │)
+    const cells = line.split("│");
+    if (cells.length < 3) continue;
+    const requestCell = (cells[1] || "").trim();
+    const match = requestCell.match(uuidPattern);
+    if (match) ids.push(match[0]);
   }
   return ids;
 }
