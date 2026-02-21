@@ -62,6 +62,7 @@ RUN apt-get update \
     g++ \
     make \
     procps \
+    psmisc \
     file \
     git \
     python3 \

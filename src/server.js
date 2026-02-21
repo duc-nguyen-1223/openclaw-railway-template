@@ -357,6 +357,159 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// ========== AUTO-APPROVE GATEWAY DEVICE ONLY ==========
+// Automatically approve ONLY the gateway's own WebSocket device (Control UI) after startup.
+// This prevents the "disconnected (1008): pairing required" error for the admin.
+//
+// SECURITY: We deliberately do NOT auto-approve channel pairings (Telegram, Discord, Slack).
+// Channel pairings must be approved manually by the admin via /setup to prevent
+// unauthorized users from gaining access to the gateway through messaging platforms.
+async function autoApproveGatewayDevice() {
+  try {
+    // Short delay to let the gateway fully initialize
+    await sleep(3000);
+
+    console.log(
+      "[auto-approve] Checking for pending gateway device request...",
+    );
+
+    // Strategy 1: Try JSON list to identify gateway/websocket device specifically
+    const listResult = await runCmd(
+      OPENCLAW_NODE,
+      clawArgs(["devices", "list", "--json"]),
+      { timeoutMs: 10_000 },
+    );
+
+    if (listResult.code === 0 && listResult.output?.trim()) {
+      try {
+        const devices = JSON.parse(listResult.output);
+        const pending = Array.isArray(devices)
+          ? devices.filter(
+              (d) => d.status === "pending" || d.state === "pending",
+            )
+          : [];
+
+        if (pending.length === 0) {
+          console.log("[auto-approve] No pending devices found");
+          return;
+        }
+
+        // Only approve devices that look like the gateway's own connection
+        // (type=websocket, source=gateway, or name contains "gateway"/"control")
+        // Never approve channel pairings (telegram, discord, slack)
+        const CHANNEL_TYPES = new Set([
+          "telegram",
+          "discord",
+          "slack",
+          "channel",
+        ]);
+
+        for (const device of pending) {
+          const deviceType = (device.type || device.source || "").toLowerCase();
+          const deviceName = (device.name || device.label || "").toLowerCase();
+          const deviceChannel = (device.channel || "").toLowerCase();
+
+          // Skip channel pairings — those must be manually approved
+          if (
+            CHANNEL_TYPES.has(deviceType) ||
+            CHANNEL_TYPES.has(deviceChannel)
+          ) {
+            console.log(
+              `[auto-approve] ⏭ Skipping channel pairing: ${deviceType || deviceChannel} (must be approved manually)`,
+            );
+            continue;
+          }
+
+          // Approve if it looks like a gateway/websocket/control-ui device
+          const isGatewayDevice =
+            deviceType === "websocket" ||
+            deviceType === "gateway" ||
+            deviceType === "browser" ||
+            deviceType === "web" ||
+            deviceName.includes("gateway") ||
+            deviceName.includes("control") ||
+            deviceName.includes("browser") ||
+            deviceType === ""; // Unknown type = likely gateway WebSocket
+
+          if (isGatewayDevice) {
+            const id = device.requestId || device.id || device.deviceId;
+            if (!id) continue;
+            try {
+              const result = await runCmd(
+                OPENCLAW_NODE,
+                clawArgs(["devices", "approve", id]),
+              );
+              console.log(
+                `[auto-approve] ${result.code === 0 ? "✓" : "✗"} Gateway device ${id}: ${result.output?.trim() || `code=${result.code}`}`,
+              );
+            } catch (err) {
+              console.log(
+                `[auto-approve] ✗ Error approving ${id}: ${err.message}`,
+              );
+            }
+          } else {
+            console.log(
+              `[auto-approve] ⏭ Skipping non-gateway device: type="${deviceType}" name="${deviceName}"`,
+            );
+          }
+        }
+
+        console.log("[auto-approve] Gateway device check complete");
+        return;
+      } catch {
+        // JSON parse failed, fall through to plain text
+      }
+    }
+
+    // Strategy 2: Plain text list — only approve if there's exactly one pending device
+    // (conservative: if multiple pending, we can't distinguish gateway from channel)
+    const listPlain = await runCmd(
+      OPENCLAW_NODE,
+      clawArgs(["devices", "list"]),
+      { timeoutMs: 10_000 },
+    );
+
+    if (listPlain.code === 0) {
+      const requestIds = extractDeviceRequestIds(listPlain.output || "");
+
+      if (requestIds.length === 0) {
+        console.log("[auto-approve] No pending devices found in text output");
+      } else if (requestIds.length === 1) {
+        // Only one pending device right after gateway start — very likely the gateway itself
+        const id = requestIds[0];
+        console.log(
+          `[auto-approve] Single pending device ${id} — likely gateway, approving...`,
+        );
+        try {
+          const result = await runCmd(
+            OPENCLAW_NODE,
+            clawArgs(["devices", "approve", id]),
+          );
+          console.log(
+            `[auto-approve] ${result.code === 0 ? "✓" : "✗"} Device ${id}: ${result.output?.trim() || `code=${result.code}`}`,
+          );
+        } catch (err) {
+          console.log(`[auto-approve] ✗ Error approving ${id}: ${err.message}`);
+        }
+      } else {
+        console.log(
+          `[auto-approve] ⚠ ${requestIds.length} pending devices found — skipping auto-approve (can't distinguish gateway from channels)`,
+        );
+        console.log(
+          `[auto-approve] Approve channel pairings manually via /setup → Device Pairing`,
+        );
+      }
+    } else {
+      console.log(
+        `[auto-approve] devices list failed (code=${listPlain.code}), skipping`,
+      );
+    }
+  } catch (err) {
+    // Non-fatal — don't crash gateway startup over auto-approve
+    console.log(`[auto-approve] Error: ${err.message}`);
+  }
+}
+
 async function waitForGatewayReady(opts = {}) {
   const timeoutMs = opts.timeoutMs ?? 120_000; // Increased from 60s to 120s for Railway cold starts
   const start = Date.now();
@@ -377,6 +530,8 @@ async function waitForGatewayReady(opts = {}) {
             StartupState.READY,
             `Gateway ready after ${elapsed}s`,
           );
+          // Auto-approve gateway device only (not channel pairings — those require manual approval)
+          autoApproveGatewayDevice();
           return true;
         }
       } catch (err) {
@@ -545,6 +700,8 @@ function startBackgroundHealthMonitor() {
           );
           clearInterval(healthMonitorInterval);
           healthMonitorInterval = null;
+          // Auto-approve gateway device only (not channel pairings — those require manual approval)
+          autoApproveGatewayDevice();
         }
       } catch (err) {
         // Still not ready, will check again in 10s
@@ -612,7 +769,7 @@ async function ensureGatewayRunning() {
 async function restartGateway() {
   console.log("[gateway] Restarting gateway...");
 
-  // Kill gateway process tracked by wrapper
+  // Step 1: Kill gateway process tracked by wrapper
   if (gatewayProc) {
     console.log(
       `[gateway] Killing wrapper-managed gateway process (PID: ${gatewayProc.pid})`,
@@ -625,15 +782,14 @@ async function restartGateway() {
     gatewayProc = null;
   }
 
-  // Also kill any other gateway processes (e.g., started by onboard command)
-  // Use pkill to ensure ALL gateway processes are stopped before restart
+  // Step 2: pkill any gateway processes (e.g., started by onboard command)
   console.log(`[gateway] Ensuring all gateway processes stopped with pkill...`);
 
-  // Try multiple patterns to catch all gateway variants
   const killPatterns = [
-    "gateway run", // Main gateway command
-    "openclaw.*gateway", // Any openclaw gateway process
-    `port.*${INTERNAL_GATEWAY_PORT}`, // Processes using our port
+    "gateway run",
+    "openclaw.*gateway",
+    `port.*${INTERNAL_GATEWAY_PORT}`,
+    `entry\\.js.*gateway`, // node /openclaw/dist/entry.js gateway run ...
   ];
 
   for (const pattern of killPatterns) {
@@ -645,29 +801,79 @@ async function restartGateway() {
         console.log(`[gateway] pkill -f "${pattern}" succeeded`);
       }
     } catch (err) {
-      // pkill returns 1 if no processes match, which is fine
       console.log(`[gateway] pkill -f "${pattern}": ${err.message}`);
     }
   }
 
   // Give processes time to exit and release the port
-  // Increased from 1.5s to 2s for more reliable cleanup
   await sleep(2000);
 
-  // Verify port is actually free before restarting
+  // Step 3: Check if port is still held — escalate to SIGKILL + fuser
+  let portFree = false;
   try {
-    const stillListening = await probeGateway();
-    if (stillListening) {
-      console.warn(
-        `[gateway] ⚠️  Port ${INTERNAL_GATEWAY_PORT} still in use after pkill!`,
-      );
-      // Wait a bit longer
-      await sleep(3000);
-    }
+    portFree = !(await probeGateway());
   } catch {
-    // probeGateway throws if port is free, which is what we want
+    portFree = true; // probeGateway error = port free
   }
 
+  if (!portFree) {
+    console.warn(
+      `[gateway] ⚠️  Port ${INTERNAL_GATEWAY_PORT} still in use after SIGTERM, escalating to SIGKILL...`,
+    );
+
+    // SIGKILL via pkill
+    for (const pattern of killPatterns) {
+      try {
+        await runCmd("pkill", ["-9", "-f", pattern], { timeoutMs: 5000 });
+      } catch {
+        // ignore
+      }
+    }
+
+    // Nuclear option: fuser -k to kill whatever holds the port
+    try {
+      const fuserResult = await runCmd(
+        "fuser",
+        ["-k", `${INTERNAL_GATEWAY_PORT}/tcp`],
+        { timeoutMs: 5000 },
+      );
+      console.log(
+        `[gateway] fuser -k ${INTERNAL_GATEWAY_PORT}/tcp: code=${fuserResult.code} output=${fuserResult.output}`,
+      );
+    } catch (err) {
+      console.log(`[gateway] fuser not available or failed: ${err.message}`);
+      // Try ss + kill as last resort
+      try {
+        const ssResult = await runCmd(
+          "sh",
+          [
+            "-c",
+            `ss -tlnp 'sport = :${INTERNAL_GATEWAY_PORT}' | grep -oP 'pid=\\K[0-9]+' | xargs -r kill -9`,
+          ],
+          { timeoutMs: 5000 },
+        );
+        console.log(`[gateway] ss+kill fallback: code=${ssResult.code}`);
+      } catch {
+        // ignore
+      }
+    }
+
+    await sleep(2000);
+
+    // Final check
+    try {
+      const stillUp = await probeGateway();
+      if (stillUp) {
+        console.error(
+          `[gateway] ✗ Port ${INTERNAL_GATEWAY_PORT} STILL in use after all kill attempts!`,
+        );
+      }
+    } catch {
+      // port is free now
+    }
+  }
+
+  console.log(`[gateway] Port cleanup complete, starting gateway...`);
   return ensureGatewayRunning();
 }
 
@@ -1884,8 +2090,8 @@ app.post("/setup/api/devices/approve", requireSetupAuth, async (req, res) => {
   }
 });
 
-// DEPRECATED: Legacy pairing endpoint (kept for backward compatibility)
-// Use /setup/api/devices/approve instead for device pairing
+// Channel pairing endpoint (Telegram, Discord, Slack)
+// Uses `openclaw pairing approve <channel> <code>` for channel-specific pairing codes
 app.post("/setup/api/pairing/approve", requireSetupAuth, async (req, res) => {
   const { channel, code } = req.body || {};
   if (!channel || !code) {
@@ -1893,6 +2099,21 @@ app.post("/setup/api/pairing/approve", requireSetupAuth, async (req, res) => {
       .status(400)
       .json({ ok: false, error: "Missing channel or code" });
   }
+
+  // Validate channel name
+  if (!["telegram", "discord", "slack"].includes(channel)) {
+    return res
+      .status(400)
+      .json({ ok: false, error: `Invalid channel: ${channel}` });
+  }
+
+  // Validate code format (alphanumeric only)
+  if (!/^[A-Za-z0-9]+$/.test(code)) {
+    return res
+      .status(400)
+      .json({ ok: false, error: "Invalid pairing code format" });
+  }
+
   const r = await runCmd(
     OPENCLAW_NODE,
     clawArgs(["pairing", "approve", String(channel), String(code)]),

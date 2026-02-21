@@ -730,15 +730,19 @@
       <details class="card admin-card">
         <summary class="admin-toggle"><span>🔐 Device Pairing</span></summary>
         <div class="admin-content">
-          <p class="muted">Approve pending device requests.</p>
+          <p class="muted">
+            Approve Telegram/Discord pairing codes sent by the bot.
+          </p>
           <div class="pairing-row">
             <select id="pairingChannel">
               <option value="telegram">Telegram</option>
               <option value="discord">Discord</option>
             </select>
-            <input id="pairingCode" type="text" placeholder="Pairing code" />
+            <input id="pairingCode" type="text" placeholder="e.g. 77Y4F2R7" />
             <button id="pairingApprove" class="btn-sm">✓ Approve</button>
           </div>
+          <hr style="border-color: var(--border); margin: 1rem 0" />
+          <p class="muted">WebSocket devices (Control UI connections).</p>
           <button
             id="devicesRefresh"
             class="btn-sm secondary-button"

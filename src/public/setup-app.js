@@ -792,10 +792,11 @@
       }
 
       try {
-        const resp = await fetch("/setup/api/devices/approve", {
+        // Use channel-specific pairing endpoint for Telegram/Discord/Slack
+        const resp = await fetch("/setup/api/pairing/approve", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ requestId: code, channel }),
+          body: JSON.stringify({ channel, code }),
         });
         const data = await resp.json();
         if (data.ok) {
