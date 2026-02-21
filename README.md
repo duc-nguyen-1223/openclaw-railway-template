@@ -105,7 +105,7 @@ List all OpenClaw releases:
 git ls-remote --tags https://github.com/openclaw/openclaw.git | grep -v '\^{}' | sed 's|.*refs/tags/||'
 ```
 
-See **[OPENCLAW-VERSION-CONTROL.md](OPENCLAW-VERSION-CONTROL.md)** for detailed documentation.
+See **[OPENCLAW-VERSION-CONTROL.md](docs/OPENCLAW-VERSION-CONTROL.md)** for detailed documentation.
 
 ## New Features in This Fork
 
@@ -354,9 +354,9 @@ docker build --build-arg OPENCLAW_VERSION=v2026.2.16 -t openclaw-test .
 ## Documentation
 
 - **[CLAUDE.md](CLAUDE.md)** - Developer documentation and architecture notes
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** - Contribution guidelines and development setup
-- **[MIGRATION.md](MIGRATION.md)** - Migration guide from older versions
-- **[OPENCLAW-VERSION-CONTROL.md](OPENCLAW-VERSION-CONTROL.md)** - Version control feature details
+- **[CONTRIBUTING.md](docs/CONTRIBUTING.md)** - Contribution guidelines and development setup
+- **[MIGRATION.md](docs/MIGRATION.md)** - Migration guide from older versions
+- **[OPENCLAW-VERSION-CONTROL.md](docs/OPENCLAW-VERSION-CONTROL.md)** - Version control feature details
 - **[DAY7-TEST-REPORT.md](DAY7-TEST-REPORT.md)** - Comprehensive test results
 - **[QA-SANITY-CHECK-REPORT.md](QA-SANITY-CHECK-REPORT.md)** - Local validation results
 

@@ -357,156 +357,64 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// ========== AUTO-APPROVE GATEWAY DEVICE ONLY ==========
-// Automatically approve ONLY the gateway's own WebSocket device (Control UI) after startup.
-// This prevents the "disconnected (1008): pairing required" error for the admin.
+// ========== ENFORCE GATEWAY CONFIG ON EVERY START ==========
+// Directly patch the config JSON before spawning the gateway to ensure
+// proper security settings. This runs on EVERY start, not just onboarding.
 //
-// SECURITY: We deliberately do NOT auto-approve channel pairings (Telegram, Discord, Slack).
-// Channel pairings must be approved manually by the admin via /setup to prevent
-// unauthorized users from gaining access to the gateway through messaging platforms.
-async function autoApproveGatewayDevice() {
+// Security model:
+// - Gateway is bound to loopback (127.0.0.1) — unreachable from outside
+// - Token auth protects all gateway access
+// - The wrapper handles external auth (Basic for /setup, Bearer injection for /openclaw)
+// - Device pairing is disabled because it's redundant on top of token auth
+//   and causes "1008: pairing required" errors for the Control UI
+// - Channel pairings (Telegram/Discord) are separate and always require manual approval
+function enforceGatewayConfig() {
+  const cfgPath = configPath();
   try {
-    // Short delay to let the gateway fully initialize
-    await sleep(3000);
+    if (!fs.existsSync(cfgPath)) return;
 
-    console.log(
-      "[auto-approve] Checking for pending gateway device request...",
-    );
+    const config = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
 
-    // Strategy 1: Try JSON list to identify gateway/websocket device specifically
-    const listResult = await runCmd(
-      OPENCLAW_NODE,
-      clawArgs(["devices", "list", "--json"]),
-      { timeoutMs: 10_000 },
-    );
+    let changed = false;
 
-    if (listResult.code === 0 && listResult.output?.trim()) {
-      try {
-        const devices = JSON.parse(listResult.output);
-        const pending = Array.isArray(devices)
-          ? devices.filter(
-              (d) => d.status === "pending" || d.state === "pending",
-            )
-          : [];
+    // Ensure gateway section exists
+    if (!config.gateway) config.gateway = {};
 
-        if (pending.length === 0) {
-          console.log("[auto-approve] No pending devices found");
-          return;
-        }
-
-        // Only approve devices that look like the gateway's own connection
-        // (type=websocket, source=gateway, or name contains "gateway"/"control")
-        // Never approve channel pairings (telegram, discord, slack)
-        const CHANNEL_TYPES = new Set([
-          "telegram",
-          "discord",
-          "slack",
-          "channel",
-        ]);
-
-        for (const device of pending) {
-          const deviceType = (device.type || device.source || "").toLowerCase();
-          const deviceName = (device.name || device.label || "").toLowerCase();
-          const deviceChannel = (device.channel || "").toLowerCase();
-
-          // Skip channel pairings — those must be manually approved
-          if (
-            CHANNEL_TYPES.has(deviceType) ||
-            CHANNEL_TYPES.has(deviceChannel)
-          ) {
-            console.log(
-              `[auto-approve] ⏭ Skipping channel pairing: ${deviceType || deviceChannel} (must be approved manually)`,
-            );
-            continue;
-          }
-
-          // Approve if it looks like a gateway/websocket/control-ui device
-          const isGatewayDevice =
-            deviceType === "websocket" ||
-            deviceType === "gateway" ||
-            deviceType === "browser" ||
-            deviceType === "web" ||
-            deviceName.includes("gateway") ||
-            deviceName.includes("control") ||
-            deviceName.includes("browser") ||
-            deviceType === ""; // Unknown type = likely gateway WebSocket
-
-          if (isGatewayDevice) {
-            const id = device.requestId || device.id || device.deviceId;
-            if (!id) continue;
-            try {
-              const result = await runCmd(
-                OPENCLAW_NODE,
-                clawArgs(["devices", "approve", id]),
-              );
-              console.log(
-                `[auto-approve] ${result.code === 0 ? "✓" : "✗"} Gateway device ${id}: ${result.output?.trim() || `code=${result.code}`}`,
-              );
-            } catch (err) {
-              console.log(
-                `[auto-approve] ✗ Error approving ${id}: ${err.message}`,
-              );
-            }
-          } else {
-            console.log(
-              `[auto-approve] ⏭ Skipping non-gateway device: type="${deviceType}" name="${deviceName}"`,
-            );
-          }
-        }
-
-        console.log("[auto-approve] Gateway device check complete");
-        return;
-      } catch {
-        // JSON parse failed, fall through to plain text
-      }
-    }
-
-    // Strategy 2: Plain text list — only approve if there's exactly one pending device
-    // (conservative: if multiple pending, we can't distinguish gateway from channel)
-    const listPlain = await runCmd(
-      OPENCLAW_NODE,
-      clawArgs(["devices", "list"]),
-      { timeoutMs: 10_000 },
-    );
-
-    if (listPlain.code === 0) {
-      const requestIds = extractDeviceRequestIds(listPlain.output || "");
-
-      if (requestIds.length === 0) {
-        console.log("[auto-approve] No pending devices found in text output");
-      } else if (requestIds.length === 1) {
-        // Only one pending device right after gateway start — very likely the gateway itself
-        const id = requestIds[0];
-        console.log(
-          `[auto-approve] Single pending device ${id} — likely gateway, approving...`,
-        );
-        try {
-          const result = await runCmd(
-            OPENCLAW_NODE,
-            clawArgs(["devices", "approve", id]),
-          );
-          console.log(
-            `[auto-approve] ${result.code === 0 ? "✓" : "✗"} Device ${id}: ${result.output?.trim() || `code=${result.code}`}`,
-          );
-        } catch (err) {
-          console.log(`[auto-approve] ✗ Error approving ${id}: ${err.message}`);
-        }
-      } else {
-        console.log(
-          `[auto-approve] ⚠ ${requestIds.length} pending devices found — skipping auto-approve (can't distinguish gateway from channels)`,
-        );
-        console.log(
-          `[auto-approve] Approve channel pairings manually via /setup → Device Pairing`,
-        );
-      }
-    } else {
+    // Disable device pairing requirement for loopback connections
+    // This prevents "1008: pairing required" for the Control UI WebSocket
+    // Security: gateway is loopback-only + token-authed, so device pairing is redundant
+    if (!config.gateway.devices) config.gateway.devices = {};
+    if (config.gateway.devices.pairingRequired !== false) {
+      config.gateway.devices.pairingRequired = false;
+      changed = true;
       console.log(
-        `[auto-approve] devices list failed (code=${listPlain.code}), skipping`,
+        "[gateway-config] Set gateway.devices.pairingRequired = false",
       );
     }
+
+    // Remove allowInsecureAuth if it was set by older versions — we use proper config now
+    if (config.gateway.controlUi?.allowInsecureAuth !== undefined) {
+      delete config.gateway.controlUi.allowInsecureAuth;
+      // Clean up empty controlUi object
+      if (Object.keys(config.gateway.controlUi).length === 0) {
+        delete config.gateway.controlUi;
+      }
+      changed = true;
+      console.log("[gateway-config] Removed legacy allowInsecureAuth setting");
+    }
+
+    if (changed) {
+      fs.writeFileSync(cfgPath, JSON.stringify(config, null, 2), {
+        encoding: "utf8",
+        mode: 0o600,
+      });
+      console.log("[gateway-config] ✓ Config patched successfully");
+    } else {
+      console.log("[gateway-config] ✓ Config already correct");
+    }
   } catch (err) {
-    // Non-fatal — don't crash gateway startup over auto-approve
-    console.log(`[auto-approve] Error: ${err.message}`);
+    console.warn(`[gateway-config] Could not patch config: ${err.message}`);
+    // Non-fatal — gateway may still work
   }
 }
 
@@ -530,8 +438,6 @@ async function waitForGatewayReady(opts = {}) {
             StartupState.READY,
             `Gateway ready after ${elapsed}s`,
           );
-          // Auto-approve gateway device only (not channel pairings — those require manual approval)
-          autoApproveGatewayDevice();
           return true;
         }
       } catch (err) {
@@ -615,6 +521,11 @@ async function startGateway() {
   }
 
   console.log(`[gateway] ========== TOKEN SYNC COMPLETE ==========`);
+
+  // Enforce security config before every gateway start
+  // This disables device pairing (redundant on loopback + token auth)
+  // and removes any legacy allowInsecureAuth settings
+  enforceGatewayConfig();
 
   const args = [
     "gateway",
@@ -700,8 +611,6 @@ function startBackgroundHealthMonitor() {
           );
           clearInterval(healthMonitorInterval);
           healthMonitorInterval = null;
-          // Auto-approve gateway device only (not channel pairings — those require manual approval)
-          autoApproveGatewayDevice();
         }
       } catch (err) {
         // Still not ready, will check again in 10s
@@ -1354,14 +1263,16 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
           String(INTERNAL_GATEWAY_PORT),
         ]),
       );
-      // Allow Control UI access without device pairing (fixes error 1008: pairing required)
+      // Disable device pairing requirement (gateway is loopback-only + token-authed, pairing is redundant)
+      // This is enforced on every gateway start via enforceGatewayConfig(), but also set during onboard
       await runCmd(
         OPENCLAW_NODE,
         clawArgs([
           "config",
           "set",
-          "gateway.controlUi.allowInsecureAuth",
-          "true",
+          "--json",
+          "gateway.devices.pairingRequired",
+          "false",
         ]),
       );
 
@@ -1630,6 +1541,10 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
     return res.status(ok ? 200 : 500).json({
       ok,
       output: `${onboard.output}${extra}`,
+      // Include gateway token on success so the frontend can auto-set the cookie
+      // and the user can seamlessly open /openclaw without a separate token entry step.
+      // This is safe because /setup/api/run is already behind requireSetupAuth.
+      ...(ok ? { gatewayToken: OPENCLAW_GATEWAY_TOKEN } : {}),
     });
   } catch (err) {
     console.error("[/setup/api/run] error:", err);
@@ -2121,6 +2036,16 @@ app.post("/setup/api/pairing/approve", requireSetupAuth, async (req, res) => {
   return res
     .status(r.code === 0 ? 200 : 500)
     .json({ ok: r.code === 0, output: r.output });
+});
+
+// ========== GATEWAY TOKEN RETRIEVAL ==========
+// Returns the gateway token so the admin UI can display it for the user to copy.
+// This is safe: the endpoint is behind requireSetupAuth (Basic auth with SETUP_PASSWORD).
+app.get("/setup/api/gateway-token", requireSetupAuth, (_req, res) => {
+  res.json({
+    ok: true,
+    token: OPENCLAW_GATEWAY_TOKEN,
+  });
 });
 
 // ========== BACKUP IMPORT HELPER FUNCTIONS ==========
@@ -2715,8 +2640,9 @@ proxy.on("proxyReqWs", (proxyReq, req, socket, options, head) => {
 });
 
 // ========== GATEWAY TOKEN ENTRY PAGE ==========
-// Serves a friendly token entry page at /openclaw/token so users don't have to hunt for the field.
-// The gateway itself requires a Bearer token; this page lets the user enter it and stores it in a cookie.
+// Serves a friendly token entry page at /openclaw/token so users can authenticate.
+// The wrapper requires users to prove they know the gateway token before proxying to the Control UI.
+// This prevents unauthorized access even if the deployment URL is discovered.
 app.get("/openclaw/token", (_req, res) => {
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -2738,11 +2664,13 @@ app.get("/openclaw/token", (_req, res) => {
     .hint{margin-top:1rem;font-size:.8rem;color:#64748b}
     .hint a{color:#6366f1}
     .error{color:#ef4444;font-size:.85rem;margin-bottom:.75rem;display:none}
+    .badge{display:inline-block;background:#dc2626;color:white;font-size:.7rem;padding:.15rem .5rem;border-radius:9999px;margin-bottom:1rem}
   </style>
 </head>
 <body>
   <div class="box">
     <h2>🦞 OpenClaw Gateway</h2>
+    ${new URLSearchParams(_req.query).get("reason") === "invalid" ? '<div class="badge">Invalid or expired token</div>' : ""}
     <p>Enter your gateway token to access the OpenClaw Control UI.</p>
     <div class="error" id="error"></div>
     <div style="text-align:left;margin-bottom:1.25rem">
@@ -2760,7 +2688,7 @@ app.get("/openclaw/token", (_req, res) => {
     function submit() {
       const token = tokenInput.value.trim();
       if (!token) { showError("Please enter a token"); return; }
-      // Store token in a cookie (httpOnly=false so gateway JS can also use it if needed)
+      // Store token in a secure cookie
       document.cookie = "openclaw_token=" + encodeURIComponent(token) + ";path=/;max-age=31536000;SameSite=Strict";
       // Redirect to the control UI
       window.location.href = "/openclaw";
@@ -2771,6 +2699,33 @@ app.get("/openclaw/token", (_req, res) => {
 </html>`;
   res.type("text/html").send(html);
 });
+
+// POST /openclaw/token/logout — clear the token cookie and redirect to the token page
+app.post("/openclaw/token/logout", (_req, res) => {
+  res.setHeader(
+    "Set-Cookie",
+    "openclaw_token=; path=/; max-age=0; SameSite=Strict",
+  );
+  res.redirect("/openclaw/token");
+});
+
+// Helper: extract the gateway token from the request cookie
+function extractTokenFromCookie(req) {
+  const cookies = req.headers.cookie || "";
+  const match = cookies.match(/(?:^|;\s*)openclaw_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+// Helper: check if request has valid gateway token (cookie must match OPENCLAW_GATEWAY_TOKEN)
+function hasValidGatewayToken(req) {
+  const cookieToken = extractTokenFromCookie(req);
+  if (!cookieToken) return false;
+  // Constant-time comparison to prevent timing attacks
+  if (cookieToken.length !== OPENCLAW_GATEWAY_TOKEN.length) return false;
+  const a = Buffer.from(cookieToken);
+  const b = Buffer.from(OPENCLAW_GATEWAY_TOKEN);
+  return crypto.timingSafeEqual(a, b);
+}
 
 app.use(async (req, res) => {
   // If not configured, force users to /setup for any non-setup routes.
@@ -2854,6 +2809,14 @@ app.use(async (req, res) => {
     }
   }
 
+  // ── Token gate: require valid gateway token cookie before proxying ──
+  // The /openclaw/token page itself is handled by a dedicated route above,
+  // so it never reaches here. Everything else under /openclaw requires auth.
+  if (!hasValidGatewayToken(req)) {
+    const reason = extractTokenFromCookie(req) ? "invalid" : "";
+    return res.redirect(`/openclaw/token${reason ? "?reason=invalid" : ""}`);
+  }
+
   // Proxy to gateway (auth token injected via proxyReq event)
   return proxy.web(req, res, { target: GATEWAY_TARGET });
 });
@@ -2899,6 +2862,15 @@ server.on("upgrade", async (req, socket, head) => {
     socket.destroy();
     return;
   }
+
+  // Gate: require valid gateway token cookie before allowing WebSocket upgrades
+  if (!hasValidGatewayToken(req)) {
+    debug("[ws-upgrade] Rejected — missing or invalid gateway token cookie");
+    socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+
   try {
     await ensureGatewayRunning();
   } catch {

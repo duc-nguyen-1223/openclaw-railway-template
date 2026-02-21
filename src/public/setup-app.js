@@ -447,6 +447,94 @@
     });
   }
 
+  // ========== SUCCESS CARD ==========
+  // After setup completes, show the gateway token and clear next-step instructions.
+  function showSuccessCard(gatewayToken) {
+    // Remove any previously rendered success card
+    const existing = document.getElementById("successCard");
+    if (existing) existing.remove();
+
+    const card = document.createElement("div");
+    card.id = "successCard";
+    card.style.cssText =
+      "margin-top:1.25rem;padding:1.25rem;background:var(--card-bg,#111827);border:1px solid var(--border,#1e293b);border-radius:.75rem;";
+
+    const tokenDisplay = gatewayToken
+      ? `
+      <div style="margin-top:1rem">
+        <label style="display:block;font-size:.75rem;color:var(--text-muted,#94a3b8);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:.35rem">
+          Gateway Token <span style="font-weight:400;text-transform:none">(save this!)</span>
+        </label>
+        <div style="display:flex;gap:.5rem;align-items:center">
+          <code id="successTokenValue" style="flex:1;padding:.5rem .75rem;background:var(--bg,#0d1321);border:1px solid var(--border,#1e293b);border-radius:.375rem;font-size:.82rem;word-break:break-all;color:var(--text,#e2e8f0);cursor:pointer" title="Click to copy">${gatewayToken}</code>
+          <button id="copyTokenBtn" style="padding:.45rem .75rem;background:var(--accent,#6366f1);color:white;border:none;border-radius:.375rem;cursor:pointer;font-size:.8rem;white-space:nowrap" title="Copy token">📋 Copy</button>
+        </div>
+        <p style="font-size:.75rem;color:var(--text-muted,#94a3b8);margin-top:.4rem">
+          You'll need this token to access the Control UI from new browsers. It's been auto-saved in your current browser.
+        </p>
+      </div>`
+      : "";
+
+    const hasTelegram = $("#enableTelegram")?.checked;
+    const hasDiscord = $("#enableDiscord")?.checked;
+    const hasChannels = hasTelegram || hasDiscord;
+
+    const channelHint = hasChannels
+      ? `
+      <div style="margin-top:1rem;padding:.75rem 1rem;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2);border-radius:.5rem">
+        <p style="font-size:.85rem;font-weight:600;margin-bottom:.35rem;color:var(--text,#e2e8f0)">📱 Channel Pairing (next step)</p>
+        <p style="font-size:.8rem;color:var(--text-muted,#94a3b8);line-height:1.5">
+          ${hasTelegram ? "Send any message to your Telegram bot. " : ""}${hasDiscord ? "DM your Discord bot. " : ""}
+          The bot will reply with a <strong>pairing code</strong>. Come back here → scroll to <strong>🔐 Device Pairing</strong> below → paste the code → click Approve.
+        </p>
+      </div>`
+      : "";
+
+    card.innerHTML = `
+      <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem">
+        <span style="font-size:1.5rem">🎉</span>
+        <h3 style="font-size:1.1rem;font-weight:700;color:var(--text,#e2e8f0)">Setup Complete!</h3>
+      </div>
+      <p style="font-size:.85rem;color:var(--text-muted,#94a3b8);line-height:1.5">
+        Your OpenClaw gateway is running. Click the button above to open the Control UI.
+      </p>
+      ${tokenDisplay}
+      ${channelHint}
+    `;
+
+    // Insert after the progress tracker
+    const progress = document.getElementById("onboardProgress");
+    if (progress) {
+      progress.parentNode.insertBefore(card, progress.nextSibling);
+    }
+
+    // Wire up copy button
+    if (gatewayToken) {
+      const copyBtn = document.getElementById("copyTokenBtn");
+      const tokenCode = document.getElementById("successTokenValue");
+      if (copyBtn) {
+        const doCopy = () => {
+          navigator.clipboard
+            .writeText(gatewayToken)
+            .then(() => {
+              copyBtn.textContent = "✅ Copied!";
+              setTimeout(() => (copyBtn.textContent = "📋 Copy"), 2000);
+            })
+            .catch(() => {
+              // Fallback: select text
+              const range = document.createRange();
+              range.selectNodeContents(tokenCode);
+              window.getSelection().removeAllRanges();
+              window.getSelection().addRange(range);
+              toast("Token selected — press Ctrl+C to copy", "info");
+            });
+        };
+        copyBtn.addEventListener("click", doCopy);
+        if (tokenCode) tokenCode.addEventListener("click", doCopy);
+      }
+    }
+  }
+
   // ========== RUN SETUP ==========
   async function runSetup() {
     if (isRunning) return;
@@ -509,6 +597,15 @@
       updateProgress("onboard", data.ok ? "done" : "error");
 
       if (data.ok) {
+        // Auto-set the gateway token cookie so the user can open /openclaw seamlessly
+        // without being redirected to the token entry page.
+        if (data.gatewayToken) {
+          document.cookie =
+            "openclaw_token=" +
+            encodeURIComponent(data.gatewayToken) +
+            ";path=/;max-age=31536000;SameSite=Strict";
+        }
+
         // Simulate remaining progress
         updateProgress("token", "active");
         await sleep(500);
@@ -535,6 +632,10 @@
         updateProgress("health", "done");
 
         toast("Setup completed successfully! 🎉", "success", 6000);
+
+        // Show success card with gateway token and next steps
+        showSuccessCard(data.gatewayToken);
+
         runBtn.textContent = "✅ Done! Open UI →";
         runBtn.classList.remove("running");
         runBtn.classList.add("success");
@@ -680,6 +781,92 @@
     } catch (err) {
       console.warn("[dashboard] Failed to refresh:", err);
     }
+  }
+
+  // ========== ADMIN: GATEWAY ACCESS ==========
+  function initGatewayAccess() {
+    let tokenRevealed = false;
+    let cachedToken = null;
+
+    const display = document.getElementById("adminTokenDisplay");
+    const revealBtn = document.getElementById("adminTokenReveal");
+    const copyBtn = document.getElementById("adminTokenCopy");
+    if (!display || !revealBtn || !copyBtn) return;
+
+    async function fetchToken() {
+      if (cachedToken) return cachedToken;
+      try {
+        const resp = await fetch("/setup/api/gateway-token");
+        const data = await resp.json();
+        if (data.ok && data.token) {
+          cachedToken = data.token;
+          // Also ensure the cookie is set so "Open Control UI" works seamlessly
+          document.cookie =
+            "openclaw_token=" +
+            encodeURIComponent(data.token) +
+            ";path=/;max-age=31536000;SameSite=Strict";
+          return data.token;
+        }
+      } catch {
+        // ignore
+      }
+      return null;
+    }
+
+    revealBtn.addEventListener("click", async () => {
+      if (tokenRevealed) {
+        display.textContent = "••••••••••••••••";
+        revealBtn.textContent = "👁 Reveal";
+        tokenRevealed = false;
+        return;
+      }
+      revealBtn.textContent = "⏳";
+      const token = await fetchToken();
+      if (token) {
+        display.textContent = token;
+        revealBtn.textContent = "🙈 Hide";
+        tokenRevealed = true;
+      } else {
+        toast("Could not retrieve token", "error");
+        revealBtn.textContent = "👁 Reveal";
+      }
+    });
+
+    copyBtn.addEventListener("click", async () => {
+      const token = cachedToken || (await fetchToken());
+      if (!token) {
+        toast("Could not retrieve token", "error");
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(token);
+        copyBtn.textContent = "✅ Copied!";
+        setTimeout(() => (copyBtn.textContent = "📋 Copy"), 2000);
+      } catch {
+        // Fallback: reveal and let user copy manually
+        display.textContent = token;
+        tokenRevealed = true;
+        revealBtn.textContent = "🙈 Hide";
+        const range = document.createRange();
+        range.selectNodeContents(display);
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(range);
+        toast("Token revealed — press Ctrl+C to copy", "info");
+      }
+    });
+
+    display.addEventListener("click", async () => {
+      if (!tokenRevealed) {
+        revealBtn.click();
+      } else if (cachedToken) {
+        try {
+          await navigator.clipboard.writeText(cachedToken);
+          toast("Token copied!", "success");
+        } catch {
+          // ignore
+        }
+      }
+    });
   }
 
   // ========== ADMIN: DEBUG CONSOLE ==========
@@ -992,6 +1179,7 @@
     initChannelTabs();
     initCustomProviderTemplates();
     initPasswordToggles();
+    initGatewayAccess();
     initConsole();
     initConfigEditor();
     initPairing();
